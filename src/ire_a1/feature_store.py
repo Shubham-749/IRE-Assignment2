@@ -81,14 +81,25 @@ class UserHistoryIndex:
             for row in grouped.iter_rows(named=True)
         }
 
-    def recent_titles(self, user_id: str, cutoff_ts, max_n: int = 20) -> list[str]:
-        """Titles of up to `max_n` most-recent clicks strictly before `cutoff_ts`."""
+    def _recent(self, user_id: str, cutoff_ts, max_n: int) -> list[tuple]:
+        """Up to `max_n` (click_timestamp, article_id, title) tuples strictly before
+        `cutoff_ts`, most recent first. Shared by recent_titles() (Q2/BM25) and
+        recent_article_ids() (Q3/embeddings) so both retrieval methods see exactly the
+        same point-in-time history.
+        """
         out = []
-        for ts, _article_id, title in self._by_user.get(user_id, ()):
-            if ts >= cutoff_ts:
+        for row in self._by_user.get(user_id, ()):
+            if row[0] >= cutoff_ts:
                 continue
-            if title:
-                out.append(title)
+            out.append(row)
             if len(out) >= max_n:
                 break
         return out
+
+    def recent_titles(self, user_id: str, cutoff_ts, max_n: int = 20) -> list[str]:
+        """Titles of up to `max_n` most-recent clicks strictly before `cutoff_ts`."""
+        return [title for _ts, _article_id, title in self._recent(user_id, cutoff_ts, max_n) if title]
+
+    def recent_article_ids(self, user_id: str, cutoff_ts, max_n: int = 20) -> list[str]:
+        """Article ids of up to `max_n` most-recent clicks strictly before `cutoff_ts`."""
+        return [article_id for _ts, article_id, _title in self._recent(user_id, cutoff_ts, max_n)]

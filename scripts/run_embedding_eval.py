@@ -1,14 +1,12 @@
 #!/usr/bin/env python
-"""Q2: BM25 candidate generation + recall@K evaluation.
+"""Q3: semantic (embedding) candidate generation + recall@K evaluation.
 
-    python scripts/run_bm25_eval.py --dataset all --scale demo
+    python scripts/run_embedding_eval.py --dataset all --scale demo
 
-For each dataset: build an inverted-index BM25 over the article corpus, build a
-query per validation impression from the user's point-in-time click history titles,
-retrieve top-K candidates from the *full* corpus, and report recall@K -- how often the
-article the user actually clicked shows up in those top-K candidates. Impressions with
-no prior history (cold-start) can't build a query, so they're counted and reported
-separately rather than silently dropped.
+Mirrors run_bm25_eval.py exactly (same sampled impressions, same eligibility rule,
+same K's) via retrieval.eval_utils, so the two are directly comparable -- see
+compare_retrieval.py. Requires `python scripts/compute_embeddings.py` to have been run
+first for the dataset/scale.
 """
 
 import argparse
@@ -23,7 +21,7 @@ import polars as pl  # noqa: E402
 
 from ire_a1.feature_store import UserHistoryIndex  # noqa: E402
 from ire_a1.retrieval import eval_utils  # noqa: E402
-from ire_a1.retrieval.bm25 import BM25Index  # noqa: E402
+from ire_a1.retrieval.embeddings import EmbeddingIndex, mean_pool  # noqa: E402
 
 _MIND_SCALE_FALLBACK = {"demo": "small"}
 
@@ -36,20 +34,26 @@ def resolve_scale(dataset: str, scale: str) -> str:
 
 def evaluate(dataset: str, scale: str) -> tuple[dict, list]:
     d = REPO_ROOT / "data" / "processed" / dataset / scale
+    emb_path = d / "article_embeddings.parquet"
+    if not emb_path.exists():
+        raise FileNotFoundError(f"{emb_path} missing -- run scripts/compute_embeddings.py first")
+
     articles = pl.read_parquet(d / "articles.parquet")
     user_history = pl.read_parquet(d / "user_history.parquet")
     behaviors = pl.read_parquet(d / "behaviors_val.parquet")
+    embeddings_df = pl.read_parquet(emb_path)
 
     print(f"\n=== {dataset}/{scale} ===")
     t0 = time.time()
-    bm25 = BM25Index().build(articles)
-    print(f"BM25 index: {bm25.n_docs:,} docs, {len(bm25.postings):,} terms ({time.time()-t0:.1f}s)")
+    emb_index = EmbeddingIndex().build(embeddings_df)
+    print(f"EmbeddingIndex: {len(emb_index.article_ids):,} docs, dim={emb_index.matrix.shape[1]} "
+          f"({time.time()-t0:.1f}s)")
 
     hist_index = UserHistoryIndex(user_history, articles)
     print(f"UserHistoryIndex: {len(hist_index._by_user):,} users ({time.time()-t0:.1f}s total)")
 
     eligible, n_cold_start, n_with_click = eval_utils.eligible_impressions(
-        behaviors, hist_index.recent_titles
+        behaviors, hist_index.recent_article_ids
     )
     print(f"val impressions with >=1 click: {n_with_click:,} / {behaviors.height:,}")
     print(f"eligible (has click + non-empty history): {len(eligible):,}  "
@@ -58,9 +62,12 @@ def evaluate(dataset: str, scale: str) -> tuple[dict, list]:
     sample = eval_utils.sample_impressions(eligible)
     print(f"evaluating on {len(sample):,} sampled impressions (seed={eval_utils.SEED})")
 
-    def retrieve(titles: list[str], top_k: int) -> list[str]:
-        query = " ".join(titles)
-        return [aid for aid, _score in bm25.search(query, top_k=top_k)]
+    def retrieve(article_ids: list[str], top_k: int) -> list[str]:
+        vectors = [v for aid in article_ids if (v := emb_index.get_embedding(aid)) is not None]
+        query_vec = mean_pool(vectors)
+        if query_vec is None:
+            return []
+        return [aid for aid, _score in emb_index.search(query_vec, top_k=top_k)]
 
     t0 = time.time()
     means, records = eval_utils.score_recall_at_k(sample, retrieve)

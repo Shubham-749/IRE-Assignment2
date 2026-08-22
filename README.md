@@ -6,7 +6,10 @@
 make venv                     # create .venv, install requirements.txt
 make data DATASET=all SCALE=demo   # download -> clean -> split-verify -> feature store
 make eval-bm25 DATASET=all SCALE=demo   # Q2: BM25 index + recall@K
-make test                     # Q1/Q9 leakage tests + Q2 BM25 tests
+make embeddings DATASET=all SCALE=demo  # Q3: compute article embeddings
+make eval-embeddings DATASET=all SCALE=demo   # Q3: embedding index + recall@K
+make compare-retrieval DATASET=all SCALE=demo # Q3.5: BM25 vs embeddings, head to head
+make test                     # Q1/Q9 leakage tests + Q2/Q3 retrieval tests
 ```
 
 `DATASET` is one of `mind` / `ebnerd` / `all`. `SCALE` is `demo` / `small` / `large`
@@ -33,10 +36,16 @@ src/ire_a1/
 src/ire_a1/retrieval/
   tokenize.py            shared word tokenizer (indexing + queries)
   bm25.py                BM25Index: dict-based inverted index, Okapi BM25 scoring
+  embeddings.py           compute_embeddings() + EmbeddingIndex: brute-force cosine sim
+  eval_utils.py           shared sampling + recall@K scoring, used by both eval scripts
 scripts/build_pipeline.py   the one-command CLI (what `make data` calls)
 scripts/run_bm25_eval.py    Q2: BM25 recall@K evaluation (what `make eval-bm25` calls)
+scripts/compute_embeddings.py  Q3: encode articles -> article_embeddings.parquet
+scripts/run_embedding_eval.py  Q3: embedding recall@K evaluation
+scripts/compare_retrieval.py   Q3.5: BM25 vs embeddings, same sample, side by side
 tests/test_no_leakage.py    Q9: behaviour-window boundary tests
 tests/test_bm25.py          Q2: BM25 + UserHistoryIndex correctness
+tests/test_embeddings.py    Q3: EmbeddingIndex + recent_article_ids() correctness
 notebooks/                  original EDA notebooks (kept as reference)
 data/                        gitignored: raw/ + processed/ (feature store output)
 ```
@@ -93,11 +102,69 @@ data/                        gitignored: raw/ + processed/ (feature store output
   shared vocabulary at all). This is the expected failure mode of pure lexical
   retrieval and is exactly what Q3's semantic embeddings should help with.
 
+## Design notes (Q3)
+
+- **Real multilingual sentence embeddings**, not a lightweight substitute:
+  `sentence-transformers` with `paraphrase-multilingual-MiniLM-L12-v2` (384-dim, one
+  model covers both English/MIND and Danish/EB-NeRD), encoding `title + abstract`.
+  Chosen over a dependency-free TF-IDF+SVD alternative because it's still built on the
+  same bag-of-words counts as BM25 and less likely to show a genuine semantic win — a
+  real contextual model is what actually tests whether embeddings help. Costs a real
+  new dependency (torch + sentence-transformers, ~1-2GB) and a few minutes of compute
+  (65,238 MIND articles embedded in 314s on Apple Silicon MPS).
+- **Brute-force cosine similarity, not FAISS.** `EmbeddingIndex` mirrors `BM25Index`'s
+  `build()`/`search()` shape: L2-normalize the article matrix once, then a query is one
+  matrix-vector multiply + `np.argpartition`. At 12K-65K articles this is simpler and
+  one fewer dependency than an ANN library; FAISS is the natural swap-in at 10x scale.
+- **User vector = mean-pooled embeddings of the same point-in-time history** used for
+  BM25 (up to 20 most recent clicks). `UserHistoryIndex.recent_article_ids()` is a
+  sibling of `recent_titles()`, sharing the same leakage-tested cutoff logic — verified
+  in `tests/test_embeddings.py` to return the same underlying history window.
+- **Same evaluation protocol as Q2** (same val-split sample, same seed=42, same
+  eligibility rule), via a shared `retrieval/eval_utils.py` extracted from
+  `run_bm25_eval.py` — confirmed to reproduce Q2's exact recall@K numbers before being
+  reused, so the two methods are genuinely comparable, not just similarly-shaped.
+
+**Embedding recall@K** (same val-split sample as Q2):
+
+| Dataset | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| MIND-small | 0.88% | 1.43% | 2.27% |
+| EB-NeRD demo | 0.56% | 1.12% | 2.78% |
+
+**BM25 vs. embeddings, head to head** (`compare_retrieval.py`, same 5,000-impression
+sample for both methods per dataset):
+
+| Dataset | K | BM25 | Embeddings | Winner |
+|---|---|---|---|---|
+| MIND-small | 50 | 0.53% | 0.88% | embeddings |
+| MIND-small | 100 | 1.15% | 1.43% | embeddings |
+| MIND-small | 200 | 2.19% | 2.27% | embeddings |
+| EB-NeRD demo | 50 | 0.83% | 0.56% | bm25 |
+| EB-NeRD demo | 100 | 1.55% | 1.12% | bm25 |
+| EB-NeRD demo | 200 | 2.76% | 2.78% | ~tie |
+
+The two datasets disagree, and that's the real finding, not a wash to explain away:
+- **MIND: embeddings win outright**, at every K, and the margin holds up in the
+  long-history slice (n=4,442) where most of the sample lives. MIND's short-history
+  slice (n=558) is mixed (embeddings ahead at K=50, BM25 ahead at K=100/200) — with
+  only ~11% of the sample there, that's noisy rather than a real reversal.
+- **EB-NeRD: BM25 keeps a real edge at tight budgets (K=50/100)** and embeddings only
+  catch up by K=200. Every EB-NeRD sampled impression had ≥5 prior clicks (its users
+  read more, so the short-history slice was empty here), so this isn't a history-length
+  effect — plausibly Danish news headlines are terse and formulaic enough that exact
+  keyword match stays a strong signal, while the multilingual embedding model (trained
+  mostly on English-dominant data) has a smaller edge in Danish than in English.
+- Retrieval speed favors embeddings clearly regardless of dataset: ~1.5-4ms/query vs.
+  BM25's ~11-170ms/query (MIND's larger vocabulary makes its inverted-index postings
+  lists longer to accumulate over) — one matvec vs. walking postings lists per query
+  term.
+
 ## Status
 
 - [x] Q1 — reproducible data pipeline
 - [x] Q2 — BM25 lexical retrieval
-- [ ] Q3 — embedding-based semantic retrieval
+- [x] Q3 — embedding-based semantic retrieval
 - [ ] Q4 — offline evaluation harness
 - [ ] Q5 — Codabench submissions
 - [ ] Q6 — design note

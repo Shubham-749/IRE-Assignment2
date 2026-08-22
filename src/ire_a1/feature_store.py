@@ -56,3 +56,39 @@ def get_user_history(user_history: pl.DataFrame, user_id: str, cutoff_ts) -> pl.
         user_history.filter((pl.col("user_id") == user_id) & (pl.col("click_timestamp") < cutoff_ts))
         .sort("click_timestamp", descending=True)
     )
+
+
+class UserHistoryIndex:
+    """Same point-in-time contract as get_user_history() (click_timestamp < cutoff_ts),
+    but grouped by user once up front so a per-impression lookup is a short scan over
+    one user's own history instead of a full table scan. Needed because BM25/embedding
+    retrieval must build a query for every impression -- tens of thousands of calls,
+    where get_user_history()'s O(table size) filter per call doesn't finish in
+    reasonable time. tests/test_bm25.py checks this class agrees with the (slower,
+    already-tested) get_user_history() on a real-data sample.
+    """
+
+    def __init__(self, user_history: pl.DataFrame, articles: pl.DataFrame):
+        joined = (
+            user_history.join(articles.select("article_id", "title"), on="article_id", how="left")
+            .sort(["user_id", "click_timestamp"], descending=[False, True])
+        )
+        grouped = joined.group_by("user_id", maintain_order=True).agg(
+            pl.col("click_timestamp"), pl.col("article_id"), pl.col("title")
+        )
+        self._by_user = {
+            row["user_id"]: list(zip(row["click_timestamp"], row["article_id"], row["title"]))
+            for row in grouped.iter_rows(named=True)
+        }
+
+    def recent_titles(self, user_id: str, cutoff_ts, max_n: int = 20) -> list[str]:
+        """Titles of up to `max_n` most-recent clicks strictly before `cutoff_ts`."""
+        out = []
+        for ts, _article_id, title in self._by_user.get(user_id, ()):
+            if ts >= cutoff_ts:
+                continue
+            if title:
+                out.append(title)
+            if len(out) >= max_n:
+                break
+        return out

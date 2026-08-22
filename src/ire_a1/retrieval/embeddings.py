@@ -68,6 +68,19 @@ class EmbeddingIndex:
             top_idx = top_idx[np.argsort(-scores[top_idx])]
         return [(self.article_ids[i], float(scores[i])) for i in top_idx]
 
+    def score_candidates(self, query_vec: np.ndarray, candidate_ids: list[str]) -> dict[str, float]:
+        """Score exactly these candidates (e.g. an impression's shown article list),
+        not a full-corpus search. A candidate missing from the index (shouldn't happen
+        -- every catalog article gets an embedding -- but defended anyway) scores 0.0,
+        a neutral (orthogonal) similarity, never silently dropped.
+        """
+        norm = float(np.linalg.norm(query_vec))
+        if norm == 0.0:
+            return dict.fromkeys(candidate_ids, 0.0)
+        q = query_vec / norm
+        return {aid: float(np.dot(vec, q)) if (vec := self.get_embedding(aid)) is not None else 0.0
+                for aid in candidate_ids}
+
 
 def mean_pool(vectors: list[np.ndarray]) -> np.ndarray | None:
     return np.mean(vectors, axis=0) if vectors else None

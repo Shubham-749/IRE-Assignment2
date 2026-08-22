@@ -9,7 +9,8 @@ make eval-bm25 DATASET=all SCALE=demo   # Q2: BM25 index + recall@K
 make embeddings DATASET=all SCALE=demo  # Q3: compute article embeddings
 make eval-embeddings DATASET=all SCALE=demo   # Q3: embedding index + recall@K
 make compare-retrieval DATASET=all SCALE=demo # Q3.5: BM25 vs embeddings, head to head
-make test                     # Q1/Q9 leakage tests + Q2/Q3 retrieval tests
+make eval-harness DATASET=all SCALE=demo      # Q4: official metrics + slicing + CIs
+make test                     # Q1/Q9 leakage tests + Q2/Q3/Q4 retrieval + metrics tests
 ```
 
 `DATASET` is one of `mind` / `ebnerd` / `all`. `SCALE` is `demo` / `small` / `large`
@@ -37,17 +38,27 @@ src/ire_a1/retrieval/
   tokenize.py            shared word tokenizer (indexing + queries)
   bm25.py                BM25Index: dict-based inverted index, Okapi BM25 scoring
   embeddings.py           compute_embeddings() + EmbeddingIndex: brute-force cosine sim
+                         + score_candidates() (both indices): score a fixed candidate
+                         list for Q4, sharing the same scoring formula as search()
   eval_utils.py           shared sampling + recall@K scoring, used by both eval scripts
+src/ire_a1/eval/
+  metrics.py              AUC / MRR / nDCG@k / bootstrap_ci, all from scratch
+  beyond_accuracy.py       diversity / novelty / coverage + its own set-based bootstrap
 scripts/build_pipeline.py   the one-command CLI (what `make data` calls)
 scripts/run_bm25_eval.py    Q2: BM25 recall@K evaluation (what `make eval-bm25` calls)
 scripts/compute_embeddings.py  Q3: encode articles -> article_embeddings.parquet
 scripts/run_embedding_eval.py  Q3: embedding recall@K evaluation
 scripts/compare_retrieval.py   Q3.5: BM25 vs embeddings, same sample, side by side
+scripts/run_eval_harness.py    Q4: official metrics on both retrievers, both slices
 tests/test_no_leakage.py    Q9: behaviour-window boundary tests
 tests/test_bm25.py          Q2: BM25 + UserHistoryIndex correctness
 tests/test_embeddings.py    Q3: EmbeddingIndex + recent_article_ids() correctness
+tests/test_metrics.py       Q4: AUC/MRR/nDCG/bootstrap_ci vs. hand-computed examples
+tests/test_beyond_accuracy.py  Q4: diversity/novelty/coverage vs. hand-computed examples
 notebooks/                  original EDA notebooks (kept as reference)
 data/                        gitignored: raw/ + processed/ (feature store output)
+results/eval_results.csv    Q4 output, small enough to commit -- the one exception to
+                             the data/ gitignore rule
 ```
 
 ## Design notes (Q1)
@@ -160,11 +171,80 @@ The two datasets disagree, and that's the real finding, not a wash to explain aw
   lists longer to accumulate over) — one matvec vs. walking postings lists per query
   term.
 
+## Design notes (Q4)
+
+Q2/Q3 measured *candidate generation*: search the full article corpus, check if the
+clicked article shows up anywhere in the top-K. Q4 is a different task shape — "the
+official metrics" (AUC, MRR, nDCG@5, nDCG@10) are what MIND's and EB-NeRD's Codabench
+leaderboards actually compute: for each impression, rank the small set of candidates
+the user was actually shown (`candidate_article_ids`, ~6-20 items) and compare that
+ranking to which one they clicked.
+
+- **Metrics implemented from scratch** (`eval/metrics.py`), not pulled from
+  scikit-learn — same spirit as building BM25's inverted index from scratch in Q2.
+  AUC uses the tie-aware Mann-Whitney rank formula (ties matter: many BM25 candidates
+  share zero query terms and score exactly 0.0, so naive tie-breaking would bias AUC).
+- **`score_candidates()`** was added to both `BM25Index` and `EmbeddingIndex`, scoring
+  only an impression's own candidates rather than the whole corpus — for BM25 this
+  reuses the *exact* scoring loop `search()` already uses (refactored into a shared
+  `_score_all()`), so it's the same formula already tested in Q2, not a new one.
+- **Bootstrap 95% CIs on every metric**, generic `bootstrap_ci()` for the five
+  per-impression scalars (AUC/MRR/nDCG@5/nDCG@10/Diversity@5) plus a dedicated
+  `bootstrap_ci_coverage()` for Coverage@5, since coverage is a set-union over the
+  whole sample, not a per-impression value. That coverage CI has a known bias worth
+  being upfront about: resampling n impressions with replacement from n only covers
+  ~63% of the *distinct* originals on average (1 − 1/e), so the CI sits systematically
+  below the exact point estimate — visible in the numbers below, not hidden.
+- **Same 5,000-impression, seed=42 sample as Q2/Q3**, plus one extra filter: an
+  impression needs ≥1 non-click candidate too (AUC is undefined with a single class).
+  Every eligible impression already satisfied this — 0 skipped, since both datasets
+  show far more non-clicks than clicks per impression by construction.
+- **Slice: cold-start vs. warm** (`history_len < 5` vs. `>= 5`), the exact split
+  already used in Q3's `compare_retrieval.py`.
+
+**Overall results** (5,000 sampled val impressions, ranking each impression's own
+candidates; mean [95% CI]):
+
+| Dataset | Retriever | AUC | MRR | nDCG@5 | nDCG@10 | Diversity@5 | Novelty@5 | Coverage@5 |
+|---|---|---|---|---|---|---|---|---|
+| MIND-small | BM25 | 0.553 [.544,.561] | 0.293 | 0.269 | 0.331 | 0.917 | 16.28 | 1.86% |
+| MIND-small | Embeddings | 0.633 [.625,.642] | 0.340 | 0.325 | 0.384 | 0.847 | 16.13 | 1.66% |
+| EB-NeRD demo | BM25 | 0.494 [.485,.504] | 0.312 | 0.341 | 0.427 | 0.842 | 14.75 | 14.11% |
+| EB-NeRD demo | Embeddings | 0.539 [.531,.548] | 0.338 | 0.375 | 0.454 | 0.780 | 14.77 | 13.87% |
+
+- **MIND, ranking task confirms the Q3 candidate-generation finding**: embeddings win
+  on every accuracy metric, decisively. BM25's AUC (0.553) is barely above the 0.5
+  chance level — exact keyword overlap within an already-narrow, topically-similar
+  candidate list has little discriminating power; embeddings' smooth similarity score
+  (AUC 0.633) does much better at telling near-duplicate candidates apart.
+- **EB-NeRD flips again, and more starkly than in Q3**: BM25's AUC (0.494) is
+  statistically indistinguishable from chance — its 95% CI straddles 0.5 — while
+  embeddings clear it (0.539, CI entirely above 0.5). Both nDCG numbers are actually
+  *higher* on EB-NeRD than MIND for both methods, though: EB-NeRD's candidate lists are
+  much shorter (mostly ~6 items vs. MIND's ~20), which mechanically inflates nDCG/MRR
+  regardless of ranking quality — a reminder these two datasets' absolute numbers
+  aren't directly comparable to each other, only within-dataset.
+- **Cold-start vs. warm (MIND only** — EB-NeRD's sampled impressions were all
+  warm, same as Q3): embeddings degrade more from less history (cold-start AUC 0.591 →
+  warm 0.639, a real gap) while BM25 barely moves (0.545 → 0.554). Averaging fewer
+  embeddings gives a noisier user-centroid; a BM25 query is just as sparse either way.
+- **Accuracy and diversity trade off directly.** On both datasets, BM25 has higher
+  Diversity@5 than embeddings (MIND: 0.917 vs 0.847; EB-NeRD: 0.842 vs 0.780) — the
+  more accurate embedding ranking also produces a tighter, more thematically clustered
+  top-5, exactly the beyond-accuracy tradeoff Q4 asks the harness to surface, not
+  something a pure accuracy metric like AUC would ever show on its own.
+- **Coverage** is far higher on EB-NeRD (~14%) than MIND (~1.7-1.9%) simply because
+  EB-NeRD's catalog is ~5.5x smaller (11,777 vs. 65,238 articles) for the same
+  evaluated-impression count — expected, not a retrieval-quality signal by itself.
+
+Full numbers (all metrics, both slices, both datasets/retrievers) are in
+[`results/eval_results.csv`](results/eval_results.csv).
+
 ## Status
 
 - [x] Q1 — reproducible data pipeline
 - [x] Q2 — BM25 lexical retrieval
 - [x] Q3 — embedding-based semantic retrieval
-- [ ] Q4 — offline evaluation harness
+- [x] Q4 — offline evaluation harness
 - [ ] Q5 — Codabench submissions
 - [ ] Q6 — design note

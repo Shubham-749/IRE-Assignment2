@@ -26,6 +26,7 @@ class BM25Index:
         self.n_docs: int = 0
         self.postings: dict[str, list[tuple[int, int]]] = {}
         self.idf: dict[str, float] = {}
+        self._id_to_idx: dict[str, int] = {}
 
     def build(self, articles_df: pl.DataFrame) -> "BM25Index":
         texts = (
@@ -50,9 +51,14 @@ class BM25Index:
             term: math.log(1 + (self.n_docs - len(plist) + 0.5) / (len(plist) + 0.5))
             for term, plist in postings.items()
         }
+        self._id_to_idx = {aid: i for i, aid in enumerate(self.article_ids)}
         return self
 
-    def search(self, query_text: str, top_k: int) -> list[tuple[str, float]]:
+    def _score_all(self, query_text: str) -> dict[int, float]:
+        """doc_idx -> BM25 score, for every doc sharing >=1 term with the query.
+        Shared by search() (Q2: full-corpus top-K) and score_candidates() (Q4:
+        score a fixed candidate list) so both use the identical scoring formula.
+        """
         query_terms = set(tokenize(query_text))
         scores: dict[int, float] = {}
         for term in query_terms:
@@ -64,6 +70,20 @@ class BM25Index:
                 dl = self.doc_len[doc_idx]
                 denom = tf + self.k1 * (1 - self.b + self.b * dl / self.avgdl)
                 scores[doc_idx] = scores.get(doc_idx, 0.0) + idf * (tf * (self.k1 + 1)) / denom
+        return scores
 
+    def search(self, query_text: str, top_k: int) -> list[tuple[str, float]]:
+        scores = self._score_all(query_text)
         top = heapq.nlargest(top_k, scores.items(), key=lambda kv: kv[1])
         return [(self.article_ids[doc_idx], score) for doc_idx, score in top]
+
+    def score_candidates(self, query_text: str, candidate_ids: list[str]) -> dict[str, float]:
+        """Score exactly these candidates (e.g. an impression's shown article list),
+        not a full-corpus search. Candidates sharing no term with the query score 0.0
+        -- never dropped, since ranking metrics (Q4) need every candidate accounted for.
+        """
+        scores = self._score_all(query_text)
+        return {
+            aid: scores.get(self._id_to_idx[aid], 0.0) if aid in self._id_to_idx else 0.0
+            for aid in candidate_ids
+        }

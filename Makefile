@@ -2,7 +2,7 @@ DATASET ?= all
 SCALE ?= demo
 PY := .venv/bin/python
 
-.PHONY: venv data eval-bm25 embeddings eval-embeddings compare-retrieval test clean-data
+.PHONY: venv data eval-bm25 embeddings eval-embeddings compare-retrieval eval-harness test clean-data
 
 venv:
 	python3 -m venv .venv
@@ -22,6 +22,9 @@ eval-embeddings:
 
 compare-retrieval:
 	$(PY) scripts/compare_retrieval.py --dataset $(DATASET) --scale $(SCALE)
+
+eval-harness:
+	$(PY) scripts/run_eval_harness.py --dataset $(DATASET) --scale $(SCALE)
 
 test:
 	$(PY) -m pytest tests/ -v

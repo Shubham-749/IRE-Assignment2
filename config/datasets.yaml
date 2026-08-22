@@ -1,0 +1,23 @@
+ebnerd:
+  demo:
+    behaviors_zip_url: "https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_demo.zip"
+  small:
+    behaviors_zip_url: "https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_small.zip"
+  large:
+    behaviors_zip_url: "https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_large.zip"
+    articles_zip_url: "https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/articles_large_only.zip"
+    testset_zip_url: "https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_testset.zip"
+
+mind:
+  hf_repo: "yjw1029/MIND"
+  small:
+    train_zip: "MINDsmall_train.zip"
+    dev_zip: "MINDsmall_dev.zip"
+  large:
+    train_zip: "MINDlarge_train.zip"
+    dev_zip: "MINDlarge_dev.zip"
+    test_zip: "MINDlarge_test.zip"
+
+paths:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"

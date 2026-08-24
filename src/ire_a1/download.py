@@ -32,13 +32,19 @@ def _download_file(url: str, dest: Path, force: bool = False) -> Path:
 
 
 def _unzip(zip_path: Path, extract_dir: Path, force: bool = False) -> Path:
-    if extract_dir.exists() and any(extract_dir.iterdir()) and not force:
-        print(f"  [skip] {extract_dir} already extracted")
+    # A per-zip marker, not just "does extract_dir have anything in it" -- EB-NeRD's
+    # large-scale download extracts 3 different zips into the *same* extract_dir, so a
+    # directory-non-emptiness check can't tell "this zip is done" from "some other zip
+    # already put things here" and silently skips real work.
+    marker = extract_dir / f".extracted_{zip_path.stem}"
+    if marker.exists() and not force:
+        print(f"  [skip] {zip_path.name} already extracted into {extract_dir}")
         return extract_dir
     extract_dir.mkdir(parents=True, exist_ok=True)
     print(f"  extracting {zip_path} -> {extract_dir}")
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(extract_dir)
+    marker.touch()
     return extract_dir
 
 

@@ -18,6 +18,19 @@ make test                     # Q1/Q9 leakage tests + Q2/Q3/Q4 retrieval + metri
 when it does). `large` bundles are several GB and are only required for the Codabench
 submission (Q5); use `demo`/`small` for everything else.
 
+**Q5 (Codabench submissions)** operate on the large, unlabeled test bundles directly
+(no `demo`/`small` equivalent — real submissions need real scale) and aren't wired
+into the `make`/`DATASET`/`SCALE` pattern above:
+
+```bash
+python scripts/generate_mind_submission.py     # -> mind_prediction.zip (2,370,727 rows)
+python scripts/generate_ebnerd_submission.py   # -> predictions.zip (13,536,710 rows)
+```
+
+Each downloads/caches what it needs (large test set, article embeddings) on first run.
+`--limit N` runs a small slice first to sanity-check the format before committing to
+the full run; `--skip N` resumes an interrupted EB-NeRD run by appending past row N.
+
 The MIND dataset on HuggingFace (`yjw1029/MIND`) is gated — run `hf auth login` and
 accept access on https://huggingface.co/datasets/yjw1029/MIND before the first MIND
 download.
@@ -44,21 +57,31 @@ src/ire_a1/retrieval/
 src/ire_a1/eval/
   metrics.py              AUC / MRR / nDCG@k / bootstrap_ci, all from scratch
   beyond_accuracy.py       diversity / novelty / coverage + its own set-based bootstrap
+  submission.py            rank_and_group(): shared, tested, ordering-safe scoring ->
+                           rank_order logic used by both Q5 submission scripts
 scripts/build_pipeline.py   the one-command CLI (what `make data` calls)
 scripts/run_bm25_eval.py    Q2: BM25 recall@K evaluation (what `make eval-bm25` calls)
 scripts/compute_embeddings.py  Q3: encode articles -> article_embeddings.parquet
 scripts/run_embedding_eval.py  Q3: embedding recall@K evaluation
 scripts/compare_retrieval.py   Q3.5: BM25 vs embeddings, same sample, side by side
 scripts/run_eval_harness.py    Q4: official metrics on both retrievers, both slices
+scripts/generate_mind_submission.py    Q5: MIND large-test predictions -> Codabench zip
+scripts/generate_ebnerd_submission.py  Q5: EB-NeRD large-test predictions -> Codabench zip
 tests/test_no_leakage.py    Q9: behaviour-window boundary tests
 tests/test_bm25.py          Q2: BM25 + UserHistoryIndex correctness
 tests/test_embeddings.py    Q3: EmbeddingIndex + recent_article_ids() correctness
 tests/test_metrics.py       Q4: AUC/MRR/nDCG/bootstrap_ci vs. hand-computed examples
 tests/test_beyond_accuracy.py  Q4: diversity/novelty/coverage vs. hand-computed examples
+tests/test_download.py      Q5: _unzip() per-zip idempotency (regression: 3 zips sharing
+                             one extract dir silently skipped 2 of them)
+tests/test_submission.py    Q5: rank_and_group() ordering (regression: a real MIND
+                             submission was rejected for scrambled row order)
 notebooks/                  original EDA notebooks (kept as reference)
 data/                        gitignored: raw/ + processed/ (feature store output)
 results/eval_results.csv    Q4 output, small enough to commit -- the one exception to
                              the data/ gitignore rule
+mind_prediction*.txt/.zip, predictions*.txt/.zip   Q5 submission files (gitignored --
+                             large, regenerable via the two generate_*_submission.py scripts)
 ```
 
 ## Design notes (Q1)
@@ -240,11 +263,52 @@ candidates; mean [95% CI]):
 Full numbers (all metrics, both slices, both datasets/retrievers) are in
 [`results/eval_results.csv`](results/eval_results.csv).
 
+## Design notes (Q5)
+
+Both submissions use **embeddings, not BM25** — BM25's per-query inverted-index walk
+(the exact method from Q2) is fundamentally per-impression and, measured at
+~11-170ms/impression on the small-scale data, would take on the order of days across
+2.37M-13.5M impressions. Embedding similarity vectorizes instead (a batched row-wise
+dot product), so it's the only one of the two methods that's actually tractable at
+real Codabench scale — a genuine, load-bearing scale limitation, not an arbitrary
+choice, and good material for "where it breaks at 10x" in Q6.
+
+- **MIND** (`scripts/generate_mind_submission.py`): 2,370,727 predictions, generated in
+  under 2 minutes once article embeddings were cached. Submitted and scored:
+  **AUC 0.6194, MRR 0.3006, nDCG@5 0.3225, nDCG@10 0.3784** — remarkably close to our
+  own offline measurement on MIND-small in Q4 (embeddings AUC 0.633), a good
+  consistency check between the harness and the real leaderboard.
+- **EB-NeRD** (`scripts/generate_ebnerd_submission.py`): 13,536,710 predictions (5.7x
+  MIND's volume, ~15.2 avg candidates/impression vs. MIND's ~39.4). This one hit a real
+  wall: `clean_user_history()`'s explode-based dedup blew up to 116.8M rows for 807,677
+  users (avg history length 144.6, max 1530), which is what was actually causing
+  repeated out-of-memory kills on the 17.2GB development machine — not the scoring loop
+  itself, which several rounds of profiling had initially (wrongly) implicated. Fixed by
+  reading the raw history file directly instead of routing through the leakage-safe
+  point-in-time machinery that this use case doesn't need (full given history,
+  unconditionally — there's no leakage concern predicting genuinely future impressions).
+  Every workaround along the way (the history fix, a lazy-slice optimization, a fallback
+  per-impression scoring path used only to finish the last ~200K rows) was verified
+  against real, already-correct data before being trusted — 0 mismatches across all
+  807,677 users for the history fix, 0 mismatches on 500 known-correct impressions for
+  the fallback scorer — so none of it traded correctness for memory. Submitted; result
+  pending as of writing (EB-NeRD's grader has 5.7x more rows to score than MIND's, and
+  was still marked "Running" at last check).
+- Both scripts share `eval/submission.py`'s `rank_and_group()` for the actual
+  ranking/formatting step. It exists because the first MIND submission was rejected
+  twice before landing: once for the wrong filename inside the zip (`prediction.txt`,
+  not `mind_prediction.txt` — Codabench hardcodes the expected name), then for
+  scrambled row order (sorting by a string `impression_id` column put `"10"` right
+  after `"1"` lexicographically, but Codabench's grader compares predictions to ground
+  truth *positionally*, line by line, in the original file's order). Centralizing the
+  ordering-sensitive logic in one tested function means EB-NeRD's script never had to
+  rediscover that bug.
+
 ## Status
 
 - [x] Q1 — reproducible data pipeline
 - [x] Q2 — BM25 lexical retrieval
 - [x] Q3 — embedding-based semantic retrieval
 - [x] Q4 — offline evaluation harness
-- [ ] Q5 — Codabench submissions
+- [~] Q5 — Codabench submissions (MIND confirmed AUC 0.6194; EB-NeRD submitted, result pending)
 - [ ] Q6 — design note

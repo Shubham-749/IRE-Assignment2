@@ -5,6 +5,10 @@ data/
 *.ckpt
 *.parquet
 
+# generated Codabench submission files (large, regenerable from scripts/generate_*.py)
+mind_prediction*.txt
+predictions*.txt
+
 # python
 __pycache__/
 *.pyc

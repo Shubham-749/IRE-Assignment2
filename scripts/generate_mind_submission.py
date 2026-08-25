@@ -38,11 +38,21 @@ TEST_DIR = REPO_ROOT / "data" / "raw" / "mind" / "MINDlarge_test" / "MINDlarge_t
 CACHE_DIR = REPO_ROOT / "data" / "processed" / "mind" / "large_test_only"
 BATCH_SIZE = 20_000  # impressions per batch; ~20k * ~40 candidates * 384-dim * 2 arrays ~= 2.4GB transient
 
+# MIND-specific override, not the shared retrieval.embeddings.DEFAULT_MODEL used by
+# Q3/Q4/EB-NeRD: offline eval on MIND-small showed a real, non-noise improvement over
+# the multilingual default (AUC 0.6513 [0.6432,0.6592] vs 0.6333 [0.625,0.642], CIs
+# don't overlap) -- expected, since MIND is 100% English and the multilingual model
+# trades per-language quality for cross-lingual coverage MIND doesn't need. Cached
+# under a distinct filename so the original multilingual embeddings (and thus the
+# already-scored 0.6194 AUC submission) stay recoverable if this doesn't pan out
+# at full scale.
+MODEL_NAME = "all-mpnet-base-v2"
+
 
 def load_articles_and_embeddings() -> tuple[pl.DataFrame, pl.DataFrame]:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     articles_path = CACHE_DIR / "articles.parquet"
-    emb_path = CACHE_DIR / "article_embeddings.parquet"
+    emb_path = CACHE_DIR / "article_embeddings_mpnet.parquet"
 
     if articles_path.exists():
         articles = pl.read_parquet(articles_path)
@@ -54,12 +64,13 @@ def load_articles_and_embeddings() -> tuple[pl.DataFrame, pl.DataFrame]:
 
     if emb_path.exists():
         embeddings_df = pl.read_parquet(emb_path)
-        print(f"[skip] loaded cached embeddings ({embeddings_df.height:,} rows)")
+        print(f"[skip] loaded cached {MODEL_NAME} embeddings ({embeddings_df.height:,} rows)")
     else:
         t0 = time.time()
-        embeddings_df = compute_embeddings(articles)
+        embeddings_df = compute_embeddings(articles, model_name=MODEL_NAME)
         embeddings_df.write_parquet(emb_path)
-        print(f"computed + cached embeddings for {embeddings_df.height:,} articles in {time.time()-t0:.1f}s -> {emb_path}")
+        print(f"computed + cached {MODEL_NAME} embeddings for {embeddings_df.height:,} articles "
+              f"in {time.time()-t0:.1f}s -> {emb_path}")
 
     return articles, embeddings_df
 

@@ -274,10 +274,19 @@ real Codabench scale — a genuine, load-bearing scale limitation, not an arbitr
 choice, and good material for "where it breaks at 10x" in Q6.
 
 - **MIND** (`scripts/generate_mind_submission.py`): 2,370,727 predictions, generated in
-  under 2 minutes once article embeddings were cached. Submitted and scored:
+  under 2 minutes once article embeddings were cached. First submission scored
   **AUC 0.6194, MRR 0.3006, nDCG@5 0.3225, nDCG@10 0.3784** — remarkably close to our
   own offline measurement on MIND-small in Q4 (embeddings AUC 0.633), a good
-  consistency check between the harness and the real leaderboard.
+  consistency check between the harness and the real leaderboard. Improved from there:
+  MIND is 100% English, but article embeddings were coming from the same multilingual
+  model (`paraphrase-multilingual-MiniLM-L12-v2`) used for EB-NeRD's Danish text — a
+  real compromise, since multilingual models trade per-language quality for
+  cross-lingual coverage MIND doesn't need. Swapped in an English-specific model
+  (`all-mpnet-base-v2`, 768-dim) for MIND only — `retrieval.embeddings.DEFAULT_MODEL`
+  and everything else (Q3/Q4/EB-NeRD) is untouched. Validated the swap offline on
+  MIND-small *before* committing to a ~90-minute full-catalog re-embed: AUC 0.6513 vs.
+  0.6333, 95% CIs non-overlapping ([0.6432,0.6592] vs [0.625,0.642]) — a real signal,
+  not noise. Re-submitted and confirmed: **AUC 0.6194 → 0.6544**, kept.
 - **EB-NeRD** (`scripts/generate_ebnerd_submission.py`): 13,536,710 predictions (5.7x
   MIND's volume, ~15.2 avg candidates/impression vs. MIND's ~39.4). This one hit a real
   wall: `clean_user_history()`'s explode-based dedup blew up to 116.8M rows for 807,677
@@ -310,5 +319,5 @@ choice, and good material for "where it breaks at 10x" in Q6.
 - [x] Q2 — BM25 lexical retrieval
 - [x] Q3 — embedding-based semantic retrieval
 - [x] Q4 — offline evaluation harness
-- [~] Q5 — Codabench submissions (MIND confirmed AUC 0.6194; EB-NeRD submitted, result pending)
+- [~] Q5 — Codabench submissions (MIND confirmed AUC 0.6544; EB-NeRD submitted, result pending)
 - [ ] Q6 — design note

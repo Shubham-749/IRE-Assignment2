@@ -302,6 +302,35 @@ story.append(Paragraph(
     "per-click timestamps, only order, so synthetic per-user timestamps are assigned that are "
     "guaranteed to sit strictly before that split's earliest real impression.", body))
 
+story.append(Paragraph("Ablation: metrics with vs. without a serving-time-unavailable feature.", h2))
+story.append(Paragraph(
+    "<code>scripts/run_leakage_ablation.py</code> deliberately reintroduces one concrete leaked "
+    "feature &mdash; each user's clicks from their <i>other</i> validation-split impressions, appended "
+    "to their query on top of the real point-in-time history &mdash; and re-runs Q4's exact harness "
+    "with it. The impression's own answer is excluded from its own leak set (using the literal label "
+    "would be a trivial ablation). The no-leak column below reproduces Q4's published numbers exactly, "
+    "confirming the harness reuse is correct, not a different sample.", body))
+
+story.append(table(
+    [["Dataset", "Method", "AUC: no-leak → leak", "MRR: no-leak → leak"],
+     ["MIND-small", "BM25", "0.5529 → 0.5526", "0.2934 → 0.2816"],
+     ["MIND-small", "Embeddings", "0.6333 → 0.6316", "0.3402 → 0.3367"],
+     ["EB-NeRD demo", "BM25", "0.4944 → 0.4890", "0.3122 → 0.2973"],
+     ["EB-NeRD demo", "Embeddings", "0.5391 → 0.5434", "0.3384 → 0.3431"]],
+    [0.95 * inch, 0.95 * inch, 1.65 * inch, 1.65 * inch],
+))
+story.append(Spacer(1, 5))
+
+story.append(Paragraph(
+    "The leak mostly does not help: 3 of 4 dataset/method combinations get slightly <i>worse</i>, not "
+    "better, since the appended titles come from a user's clicks on unrelated other impressions and "
+    "mostly dilute the query rather than pointing at the right answer. EB-NeRD embeddings is the one "
+    "exception (a small, consistent gain across all four metrics), plausibly because a user's other "
+    "same-session clicks broaden the mean-pooled taste vector in a genuinely relevant direction. Worth "
+    "stating plainly: even a real, non-trivial serving-time-unavailable signal does not automatically "
+    "inflate these metrics. Full numbers (all four metrics, all bootstrap CIs) are in "
+    "<code>results/leakage_ablation.csv</code>.", body))
+
 doc = SimpleDocTemplate(
     str(OUT_PATH), pagesize=A4,
     leftMargin=0.62 * inch, rightMargin=0.62 * inch, topMargin=0.55 * inch, bottomMargin=0.55 * inch,

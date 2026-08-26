@@ -159,6 +159,33 @@ reasoning about it in advance.
 - Student reviewed the rendered PDF and approved it ("design note is very good")
   before it was committed.
 
+## Q9 — Anti-Gaming Ablation
+
+- Student noticed the AI's own earlier work had only satisfied half of Q9's explicit
+  two-part requirement (a leakage-boundary test existed, but "report metrics with and
+  without features unavailable at serving time" had not been built as a separate
+  reported ablation) and said **"yes build that ablation"** — a case of the student
+  catching a gap the AI itself had surfaced but not yet closed.
+- AI designed the leaked feature (a user's clicks from their other validation-split
+  impressions, added to their query) and ran it, reproducing Q4's published metrics
+  exactly in the "without leak" condition as a built-in correctness check before
+  trusting the comparison.
+- When the AI then asked the student a procedural question (whether to also commit a
+  results CSV), the student redirected: **"i don't understand this, do as per
+  assignment requirements"** — rather than explain the tradeoff, the AI went back to
+  the actual assignment PDF (`A1.pdf`, on disk in the repo) and confirmed Q9's exact
+  wording, which settled the question directly instead of asking the student to choose
+  between options they had no way to evaluate. This is a genuinely different pattern
+  from earlier in the project, where the student made calls the AI explicitly
+  presented (PDF vs. other format, etc.) — here the right move was for the AI to
+  resolve it itself from the primary source, and the student's push was what caused
+  that correction.
+- Real result reported honestly either way: the leaked feature mostly makes metrics
+  slightly *worse*, not better, across 3 of 4 dataset/retriever combinations — only
+  EB-NeRD embeddings showed a small, consistent gain. Added to both the design note
+  (§7) and `results/leakage_ablation.csv` without softening or cherry-picking the
+  negative result.
+
 ## Code Provenance Summary
 
 Every `.py` file under `src/ire_a1/`, `scripts/`, and `tests/`, the PDF-generation

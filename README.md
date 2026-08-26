@@ -10,6 +10,7 @@ make embeddings DATASET=all SCALE=demo  # Q3: compute article embeddings
 make eval-embeddings DATASET=all SCALE=demo   # Q3: embedding index + recall@K
 make compare-retrieval DATASET=all SCALE=demo # Q3.5: BM25 vs embeddings, head to head
 make eval-harness DATASET=all SCALE=demo      # Q4: official metrics + slicing + CIs
+make leakage-ablation DATASET=all SCALE=demo  # Q9: metrics with vs. without a leaky feature
 make test                     # Q1/Q9 leakage tests + Q2/Q3/Q4 retrieval + metrics tests
 ```
 
@@ -67,6 +68,7 @@ scripts/compare_retrieval.py   Q3.5: BM25 vs embeddings, same sample, side by si
 scripts/run_eval_harness.py    Q4: official metrics on both retrievers, both slices
 scripts/generate_mind_submission.py    Q5: MIND large-test predictions -> Codabench zip
 scripts/generate_ebnerd_submission.py  Q5: EB-NeRD large-test predictions -> Codabench zip
+scripts/run_leakage_ablation.py        Q9: metrics with vs. without a leaked feature
 tests/test_no_leakage.py    Q9: behaviour-window boundary tests
 tests/test_bm25.py          Q2: BM25 + UserHistoryIndex correctness
 tests/test_embeddings.py    Q3: EmbeddingIndex + recent_article_ids() correctness
@@ -80,6 +82,7 @@ notebooks/                  original EDA notebooks (kept as reference)
 data/                        gitignored: raw/ + processed/ (feature store output)
 results/eval_results.csv    Q4 output, small enough to commit -- the one exception to
                              the data/ gitignore rule
+results/leakage_ablation.csv  Q9 output, same committed-CSV pattern as Q4
 mind_prediction*.txt/.zip, predictions*.txt/.zip   Q5 submission files (gitignored --
                              large, regenerable via the two generate_*_submission.py scripts)
 ```
@@ -313,6 +316,52 @@ choice, and good material for "where it breaks at 10x" in Q6.
   ordering-sensitive logic in one tested function means EB-NeRD's script never had to
   rediscover that bug.
 
+## Design notes (Q9 — anti-gaming)
+
+Two requirements: enforce the point-in-time boundary with a test (already covered by
+`tests/test_no_leakage.py`, part of Q1's own design), and separately *report* metrics
+with vs. without a feature that wouldn't exist at serving time — that's what
+`scripts/run_leakage_ablation.py` does.
+
+- **The leaked feature**: for each scored impression, append that user's clicks from
+  their *other* validation-split impressions to the query, on top of their real,
+  point-in-time-safe history. At serving time a system never knows what a user is
+  about to click in their next few impressions — this is exactly that information,
+  deliberately smuggled in. The impression's own answer is excluded from its own leak
+  set (folding in the literal label would be a trivial, uninteresting ablation).
+- **Sample, scoring, and metrics are Q4's, reused directly** (`run_eval_harness.py`'s
+  `evaluate_bm25`/`evaluate_embeddings`), so the "without leak" column is a correctness
+  check as well as a baseline: it reproduces Q4's published numbers exactly.
+
+**Overall results** (5,000 sampled val impressions, mean; full CIs in
+[`results/leakage_ablation.csv`](results/leakage_ablation.csv)):
+
+| Dataset | Retriever | Metric | Without leak | With leak | Delta |
+|---|---|---|---|---|---|
+| MIND-small | BM25 | AUC | 0.5529 | 0.5526 | −0.0003 |
+| MIND-small | BM25 | MRR | 0.2934 | 0.2816 | −0.0118 |
+| MIND-small | Embeddings | AUC | 0.6333 | 0.6316 | −0.0017 |
+| MIND-small | Embeddings | MRR | 0.3402 | 0.3367 | −0.0035 |
+| EB-NeRD demo | BM25 | AUC | 0.4944 | 0.4890 | −0.0054 |
+| EB-NeRD demo | BM25 | MRR | 0.3122 | 0.2973 | −0.0149 |
+| EB-NeRD demo | Embeddings | AUC | 0.5391 | 0.5434 | **+0.0043** |
+| EB-NeRD demo | Embeddings | MRR | 0.3384 | 0.3431 | **+0.0047** |
+
+(nDCG@5/nDCG@10 follow the same per-row pattern; see the CSV for all 16 rows.)
+
+- **This leak mostly doesn't help** — 3 of 4 dataset/retriever combinations get
+  slightly *worse* with it, not better. The extra titles come from a user's clicks on
+  *other* impressions in the window, which are only loosely related to the specific
+  impression being scored, so they mostly just dilute the query rather than pointing
+  straight at the right answer.
+- **EB-NeRD embeddings is the one exception** (small, consistent gain across all four
+  metrics), plausibly because a user's other same-session clicks broaden the
+  mean-pooled taste vector in a genuinely relevant direction for Danish news, where
+  within-session topical similarity looks higher than in MIND.
+- Net takeaway: even a real, non-trivial serving-time-unavailable signal doesn't
+  automatically inflate these metrics — worth stating plainly rather than assuming
+  leakage always helps.
+
 ## Status
 
 - [x] Q1 — reproducible data pipeline
@@ -320,4 +369,6 @@ choice, and good material for "where it breaks at 10x" in Q6.
 - [x] Q3 — embedding-based semantic retrieval
 - [x] Q4 — offline evaluation harness
 - [~] Q5 — Codabench submissions (MIND confirmed AUC 0.6544; EB-NeRD submitted, result pending)
-- [ ] Q6 — design note
+- [x] Q6 — design note
+- [x] Q7 — AI usage log
+- [x] Q9 — anti-gaming (leakage test + with/without-leak ablation)

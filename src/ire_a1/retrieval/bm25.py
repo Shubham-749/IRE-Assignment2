@@ -27,6 +27,7 @@ class BM25Index:
         self.postings: dict[str, list[tuple[int, int]]] = {}
         self.idf: dict[str, float] = {}
         self._id_to_idx: dict[str, int] = {}
+        self.doc_terms: list[Counter] = []  # doc_idx -> {term: tf}, for score_candidates()
 
     def build(self, articles_df: pl.DataFrame) -> "BM25Index":
         texts = (
@@ -41,7 +42,9 @@ class BM25Index:
             tokens = tokenize(text)
             self.article_ids.append(article_id)
             self.doc_len.append(len(tokens))
-            for term, tf in Counter(tokens).items():
+            term_counts = Counter(tokens)
+            self.doc_terms.append(term_counts)
+            for term, tf in term_counts.items():
                 postings.setdefault(term, []).append((doc_idx, tf))
 
         self.postings = postings
@@ -81,9 +84,34 @@ class BM25Index:
         """Score exactly these candidates (e.g. an impression's shown article list),
         not a full-corpus search. Candidates sharing no term with the query score 0.0
         -- never dropped, since ranking metrics (Q4) need every candidate accounted for.
+
+        Deliberately doesn't reuse _score_all(): that walks every posting for every
+        query term (i.e. every doc in the corpus sharing a term with the query), which
+        is the right cost for search()'s full-corpus top-K but wasteful here, where the
+        answer is only ever needed for a handful of already-known candidates. Instead
+        this looks up each candidate's own (small) term-frequency map directly --
+        O(candidates x query terms) instead of O(query terms x corpus docs per term).
+        Identical scores to the old _score_all()-based version (same BM25 formula, same
+        idf/avgdl), just not computed for the ~entire corpus first. Matters once a
+        caller scores every labeled impression rather than a bounded eval sample (see
+        A2's scripts/build_reranker_features.py, which made this the dominant cost).
         """
-        scores = self._score_all(query_text)
-        return {
-            aid: scores.get(self._id_to_idx[aid], 0.0) if aid in self._id_to_idx else 0.0
-            for aid in candidate_ids
-        }
+        query_terms = set(tokenize(query_text))
+        scores = {}
+        for aid in candidate_ids:
+            doc_idx = self._id_to_idx.get(aid)
+            if doc_idx is None:
+                scores[aid] = 0.0
+                continue
+            dl = self.doc_len[doc_idx]
+            doc_terms = self.doc_terms[doc_idx]
+            s = 0.0
+            for term in query_terms:
+                tf = doc_terms.get(term)
+                if not tf:
+                    continue
+                idf = self.idf[term]
+                denom = tf + self.k1 * (1 - self.b + self.b * dl / self.avgdl)
+                s += idf * (tf * (self.k1 + 1)) / denom
+            scores[aid] = s
+        return scores

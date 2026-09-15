@@ -2,7 +2,7 @@ DATASET ?= all
 SCALE ?= demo
 PY := .venv/bin/python
 
-.PHONY: venv data eval-bm25 embeddings eval-embeddings compare-retrieval eval-harness leakage-ablation test clean-data
+.PHONY: venv data eval-bm25 embeddings eval-embeddings compare-retrieval eval-harness leakage-ablation reranker-features train-reranker test clean-data
 
 venv:
 	python3 -m venv .venv
@@ -28,6 +28,12 @@ eval-harness:
 
 leakage-ablation:
 	$(PY) scripts/run_leakage_ablation.py --dataset $(DATASET) --scale $(SCALE)
+
+reranker-features:
+	$(PY) scripts/build_reranker_features.py --dataset $(DATASET) --scale $(SCALE)
+
+train-reranker:
+	$(PY) scripts/train_reranker.py --dataset $(DATASET) --scale $(SCALE)
 
 test:
 	$(PY) -m pytest tests/ -v

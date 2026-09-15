@@ -103,3 +103,11 @@ class UserHistoryIndex:
     def recent_article_ids(self, user_id: str, cutoff_ts, max_n: int = 20) -> list[str]:
         """Article ids of up to `max_n` most-recent clicks strictly before `cutoff_ts`."""
         return [article_id for _ts, article_id, _title in self._recent(user_id, cutoff_ts, max_n)]
+
+    def recent(self, user_id: str, cutoff_ts, max_n: int = 20) -> list[tuple]:
+        """Up to `max_n` (click_timestamp, article_id, title) tuples strictly before
+        `cutoff_ts`, most recent first. Exposes the full tuples (not just titles or
+        ids) for A2's recency-weighted features, which need each click's own
+        timestamp -- same point-in-time cutoff as recent_titles()/recent_article_ids().
+        """
+        return self._recent(user_id, cutoff_ts, max_n)

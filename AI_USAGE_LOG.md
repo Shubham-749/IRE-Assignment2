@@ -186,13 +186,63 @@ reasoning about it in advance.
   (§7) and `results/leakage_ablation.csv` without softening or cherry-picking the
   negative result.
 
+## A2 Q1/Q2 — Behavioural Features & GBDT Re-Ranker
+
+- Context: A2 splits Q2's two re-ranker options across the two-person team — this
+  session builds the GBDT track (Option A); the teammate builds NRMS (Option B / Q3's
+  baseline) separately. Student said **"lets do gbdt here, other person will do
+  nrms"**, which set the scope for this work: Q1 (features, a prerequisite shared by
+  both tracks) + Q2 Option A only — explicitly not Q3/Q4/Q5/Q6 or Q9's full ablation
+  report, which the AI called out as depending on both re-ranker tracks existing first.
+- AI entered plan mode before writing code (a genuinely multi-file, architecturally
+  non-trivial addition), explored the existing A1 codebase directly (schema,
+  feature_store, bm25/embeddings/eval modules, existing scripts and tests, raw EB-NeRD
+  parquet columns) rather than guessing conventions, and wrote a concrete design —
+  including a deliberate choice to treat BM25/embedding scores as re-ranker *features*
+  over the dataset's own served candidate list, rather than re-deriving a separate
+  full-corpus top-K retrieval stage that would risk dropping the only candidates with
+  ground-truth labels. Student approved the plan as presented.
+- Built `src/ire_a2/features.py` (`FeatureBuilder`: click-history recency/category
+  features, article popularity/freshness, EB-NeRD-only session/dwell signal via a new
+  `EbnerdSessionIndex` reading raw `behaviors.parquet`/`history.parquet` directly, since
+  MIND provides neither `session_id` nor per-click dwell time — a real data limitation,
+  documented the same way `clean_mind.py` documents its own), `src/ire_a2/reranker.py`
+  (LightGBM LambdaRank training/scoring), and the two CLI scripts + two test files the
+  plan specified. Added one small, purely-additive method to `ire_a1/feature_store.py`
+  (`UserHistoryIndex.recent()`, exposing per-click timestamps the existing
+  `recent_titles()`/`recent_article_ids()` don't) — needed for recency-weighted
+  features, verified non-breaking by the full existing test suite passing unchanged.
+- Real-data smoke test surfaced a genuine performance bug in A1's own
+  `BM25Index.score_candidates()`: its docstring promises "not a full-corpus search,"
+  but the implementation scored the *entire* corpus per query and only filtered
+  afterward — invisible at Q4's bounded 5000-impression eval sample, but a ~5
+  minutes-per-split cost once this script scores every labeled impression to build
+  GBDT training data (~50K EB-NeRD impressions, ~225K for MIND). AI fixed it to score
+  directly against each candidate's own term-frequency map (added `doc_terms` at build
+  time), verified numerically identical scores against the old implementation on 50
+  real impressions (0 mismatches) and against the previously-committed
+  `results/eval_results.csv` (BM25 AUC for ebnerd/demo: 0.49437 before and after),
+  confirmed via the full test suite (57/57 passing) before and after. Runtime for
+  EB-NeRD demo's feature build dropped from ~5 min/split to ~4s/split.
+- Ran the full pipeline end-to-end on real data (`ebnerd/demo`, `mind/small`):
+  feature tables sanity-checked (no nulls, plausible score ranges, click rate ≈ 1/avg
+  candidates per impression), GBDT trained, before/after metrics reported. Honest
+  result, not cherry-picked: on EB-NeRD the GBDT re-ranker's AUC beats both plain BM25
+  and plain embeddings (0.559 vs. 0.494 vs. 0.539); on MIND it beats BM25 but trails
+  plain embeddings on AUC (0.594 vs. 0.553 vs. 0.633) while roughly matching on
+  MRR/nDCG@5/@10 — a real, not necessarily favorable, finding to carry into Q3's
+  ablation rather than a bug, given demo/small-scale data and fixed (non-tuned)
+  hyperparameters. Feature importances are sane (`candidate_popularity`,
+  `embedding_score`, `bm25_score`, `freshness_hours` dominate on both datasets).
+
 ## Code Provenance Summary
 
-Every `.py` file under `src/ire_a1/`, `scripts/`, and `tests/`, the PDF-generation
-scripts, `README.md`'s technical content, and this log were written by the AI. No
-hand-written source code exists in this repository. The student's contribution is the
-direction, decisions, and verification described above — most concretely visible in
-this repository's git history as a sequence of AI-authored commits, each triggered by
-an explicit student instruction, and in the real, externally-verified results (actual
-Codabench scores, actual platform error messages, actual screenshots) that could only
-have entered this project through the student's own actions outside the AI's tools.
+Every `.py` file under `src/ire_a1/`, `src/ire_a2/`, `scripts/`, and `tests/`, the
+PDF-generation scripts, `README.md`'s technical content, and this log were written by
+the AI. No hand-written source code exists in this repository. The student's
+contribution is the direction, decisions, and verification described above — most
+concretely visible in this repository's git history as a sequence of AI-authored
+commits, each triggered by an explicit student instruction, and in the real,
+externally-verified results (actual Codabench scores, actual platform error messages,
+actual screenshots) that could only have entered this project through the student's
+own actions outside the AI's tools.

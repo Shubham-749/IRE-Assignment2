@@ -19,6 +19,22 @@ make test                     # Q1/Q9 leakage tests + Q2/Q3/Q4 retrieval + metri
 when it does). `large` bundles are several GB and are only required for the Codabench
 submission (Q5); use `demo`/`small` for everything else.
 
+## A2 Quickstart — GBDT re-ranker (Q1/Q2 Option A)
+
+Builds on the A1 pipeline above (`make data`/`make embeddings` must already have run
+for the dataset/scale you're targeting).
+
+```bash
+make reranker-features DATASET=all SCALE=demo  # A2 Q1: behavioural features (train+val)
+make train-reranker DATASET=all SCALE=demo     # A2 Q2: train GBDT, before/after metrics
+```
+
+`reranker-features` writes `data/processed/<dataset>/<scale>/reranker_features_{train,val}.parquet`
+(gitignored, cached so `train-reranker` doesn't recompute them). `train-reranker` trains
+a LightGBM LambdaRank model and prints AUC/MRR/nDCG@5/@10 for plain BM25, plain
+embeddings, and the GBDT re-ranker on the same val-split sample `eval-harness` (Q4)
+already reports on, writing `results/reranker_eval.csv`.
+
 **Q5 (Codabench submissions)** operate on the large, unlabeled test bundles directly
 (no `demo`/`small` equivalent — real submissions need real scale) and aren't wired
 into the `make`/`DATASET`/`SCALE` pattern above:
@@ -85,6 +101,19 @@ results/eval_results.csv    Q4 output, small enough to commit -- the one excepti
 results/leakage_ablation.csv  Q9 output, same committed-CSV pattern as Q4
 mind_prediction*.txt/.zip, predictions*.txt/.zip   Q5 submission files (gitignored --
                              large, regenerable via the two generate_*_submission.py scripts)
+
+src/ire_a2/
+  features.py              A2 Q1: FeatureBuilder -- click-history/session/article
+                            features, built on UserHistoryIndex.recent(); EB-NeRD-only
+                            session/dwell signal via EbnerdSessionIndex + a raw-parquet
+                            dwell lookup (MIND has no session_id or per-click dwell time)
+  reranker.py               A2 Q2 Option A: LightGBM LambdaRank training/scoring
+scripts/build_reranker_features.py  A2 Q1: candidate-level feature table (train+val)
+scripts/train_reranker.py           A2 Q2: train GBDT, before/after metrics vs. Q4
+tests/test_a2_features.py   A2 Q1: FeatureBuilder correctness + UserHistoryIndex.recent()
+                             leakage boundary test
+tests/test_a2_reranker.py   A2 Q2: GBDT ranks the true click above distractors (synthetic)
+results/reranker_eval.csv   A2 Q2 output, same committed-CSV pattern as eval_results.csv
 ```
 
 ## Design notes (Q1)

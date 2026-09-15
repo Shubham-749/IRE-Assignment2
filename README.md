@@ -1,6 +1,11 @@
-# CS4.406 Assignment 1 — Lexical & Semantic Retrieval (MIND + EB-NeRD)
+# CS4.406 Assignments 1 & 2 — News Recommendation (MIND + EB-NeRD)
 
-## Quickstart
+This repo (`IRE-Assignment2`) carries the full history forward from
+[`IRE-Assignment1`](https://github.com/Shubham-749/IRE-Assignment1): A1's lexical/
+semantic retrieval pipeline below is the foundation A2's re-ranker (further down) is
+built on, not a separate thing to re-clone.
+
+## A1 Quickstart — retrieval foundation
 
 ```bash
 make venv                     # create .venv, install requirements.txt

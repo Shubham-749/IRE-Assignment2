@@ -121,7 +121,7 @@ tests/test_a2_reranker.py   A2 Q2: GBDT ranks the true click above distractors (
 results/reranker_eval.csv   A2 Q2 output, same committed-CSV pattern as eval_results.csv
 ```
 
-## Design notes (Q1)
+## Design notes (A1 Q1)
 
 - **Splits are not re-derived.** Both datasets already ship official time-based
   train/val folders (MIND: train=Nov11-14 / dev=Nov15; EB-NeRD: train/validation by
@@ -142,7 +142,7 @@ results/reranker_eval.csv   A2 Q2 output, same committed-CSV pattern as eval_res
   splits. The original id is kept in `raw_impression_id` for producing Codabench
   submission files later (Q5).
 
-## Design notes (Q2)
+## Design notes (A1 Q2)
 
 - **A plain dict-based inverted index**, built from scratch (not a library), scored
   with classic Okapi BM25 (`k1=1.5, b=0.75`) over `title + abstract`. Scoring a query
@@ -173,7 +173,7 @@ results/reranker_eval.csv   A2 Q2 output, same committed-CSV pattern as eval_res
   shared vocabulary at all). This is the expected failure mode of pure lexical
   retrieval and is exactly what Q3's semantic embeddings should help with.
 
-## Design notes (Q3)
+## Design notes (A1 Q3)
 
 - **Real multilingual sentence embeddings**, not a lightweight substitute:
   `sentence-transformers` with `paraphrase-multilingual-MiniLM-L12-v2` (384-dim, one
@@ -231,7 +231,7 @@ The two datasets disagree, and that's the real finding, not a wash to explain aw
   lists longer to accumulate over) — one matvec vs. walking postings lists per query
   term.
 
-## Design notes (Q4)
+## Design notes (A1 Q4)
 
 Q2/Q3 measured *candidate generation*: search the full article corpus, check if the
 clicked article shows up anywhere in the top-K. Q4 is a different task shape — "the
@@ -300,7 +300,7 @@ candidates; mean [95% CI]):
 Full numbers (all metrics, both slices, both datasets/retrievers) are in
 [`results/eval_results.csv`](results/eval_results.csv).
 
-## Design notes (Q5)
+## Design notes (A1 Q5)
 
 Both submissions use **embeddings, not BM25** — BM25's per-query inverted-index walk
 (the exact method from Q2) is fundamentally per-impression and, measured at
@@ -350,7 +350,7 @@ choice, and good material for "where it breaks at 10x" in Q6.
   ordering-sensitive logic in one tested function means EB-NeRD's script never had to
   rediscover that bug.
 
-## Design notes (Q9 — anti-gaming)
+## Design notes (A1 Q9 — anti-gaming)
 
 Two requirements: enforce the point-in-time boundary with a test (already covered by
 `tests/test_no_leakage.py`, part of Q1's own design), and separately *report* metrics
@@ -396,7 +396,7 @@ with vs. without a feature that wouldn't exist at serving time — that's what
   automatically inflate these metrics — worth stating plainly rather than assuming
   leakage always helps.
 
-## Status
+## Status — A1
 
 - [x] Q1 — reproducible data pipeline
 - [x] Q2 — BM25 lexical retrieval
@@ -406,3 +406,14 @@ with vs. without a feature that wouldn't exist at serving time — that's what
 - [x] Q6 — design note
 - [x] Q7 — AI usage log
 - [x] Q9 — anti-gaming (leakage test + with/without-leak ablation)
+
+## Status — A2
+
+- [x] Q1 — click-history/session/article features (`src/ire_a2/features.py`)
+- [x] Q2 Option A — GBDT re-ranker, before/after metrics vs. Q4's BM25/embedding baselines
+- [ ] Q2 Option B — NRMS (teammate's track, separate from this repo's history so far)
+- [ ] Q3 — baseline reproduced, then beaten + ablation with paired bootstrap CI
+- [ ] Q4 — serving & scale analysis
+- [ ] Q5 — extended evaluation (diversity/novelty/coverage, slices) + Codabench resubmission
+- [ ] Q6 — design note
+- [ ] Q9 — with/without-leak ablation for the new re-ranker features

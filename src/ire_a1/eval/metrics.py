@@ -82,3 +82,27 @@ def bootstrap_ci(values, n_boot: int = 1000, ci: float = 0.95, seed: int = 42) -
     boot_means = values[idx].mean(axis=1)
     lo, hi = np.percentile(boot_means, [(1 - ci) / 2 * 100, (1 + ci) / 2 * 100])
     return float(values.mean()), float(lo), float(hi)
+
+
+def paired_bootstrap_ci(
+    values_a, values_b, n_boot: int = 1000, ci: float = 0.95, seed: int = 42
+) -> tuple[float, float, float]:
+    """Bootstrap CI on the paired difference (b - a), e.g. "improved" minus "baseline"
+    per-impression metric values from the *same* sampled impressions. Unlike calling
+    bootstrap_ci() on each side separately (whose CIs can overlap even when b reliably
+    beats a on every impression), this resamples impressions once and differences
+    within each resample -- the CI a claimed gain must exclude zero to be significant
+    (Q3/Q9). Returns (mean_delta, ci_low, ci_high).
+    """
+    a = np.asarray(values_a, dtype=float)
+    b = np.asarray(values_b, dtype=float)
+    if len(a) != len(b):
+        raise ValueError(f"paired arrays must be the same length, got {len(a)} and {len(b)}")
+    if len(a) == 0:
+        return float("nan"), float("nan"), float("nan")
+    delta = b - a
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(delta), size=(n_boot, len(delta)))
+    boot_means = delta[idx].mean(axis=1)
+    lo, hi = np.percentile(boot_means, [(1 - ci) / 2 * 100, (1 + ci) / 2 * 100])
+    return float(delta.mean()), float(lo), float(hi)

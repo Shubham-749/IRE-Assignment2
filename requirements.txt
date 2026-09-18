@@ -7,3 +7,6 @@ sentence-transformers>=3.0
 torch>=2.2
 numpy>=1.26
 lightgbm>=4.0
+jupyter>=1.0
+nbconvert>=7.0
+ipykernel>=6.0

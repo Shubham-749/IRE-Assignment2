@@ -26,25 +26,48 @@ make test                     # Q1/Q9 leakage tests + Q2/Q3/Q4 retrieval + metri
 when it does). `large` bundles are several GB and are only required for the Codabench
 submission (Q5); use `demo`/`small` for everything else.
 
-## A2 Quickstart — GBDT re-ranker (Q1/Q2 Option A)
+## A2 Quickstart — GBDT re-ranker (Q1–Q5, Q9)
 
 Builds on the A1 pipeline above (`make data`/`make embeddings` must already have run
 for the dataset/scale you're targeting).
 
 ```bash
-make reranker-features DATASET=all SCALE=demo  # A2 Q1: behavioural features (train+val)
-make train-reranker DATASET=all SCALE=demo     # A2 Q2: train GBDT, before/after metrics
+make reranker-features DATASET=all SCALE=demo          # Q1: behavioural features (train+val)
+make train-reranker DATASET=all SCALE=demo             # Q2/Q3: 3 baselines + GBDT + paired ablation
+make reranker-scale DATASET=all SCALE=demo              # Q4: index memory + p99 latency + cost/QPS
+make reranker-extended-eval DATASET=all SCALE=demo      # Q5: full metrics, 2 slices, all 4 methods
+make reranker-leakage-ablation DATASET=all SCALE=demo   # Q9: with/without-leak paired ablation
 ```
 
-`reranker-features` writes `data/processed/<dataset>/<scale>/reranker_features_{train,val}.parquet`
-(gitignored, cached so `train-reranker` doesn't recompute them). `train-reranker` trains
-a LightGBM LambdaRank model and prints AUC/MRR/nDCG@5/@10 for plain BM25, plain
-embeddings, and the GBDT re-ranker on the same val-split sample `eval-harness` (Q4)
-already reports on, writing `results/reranker_eval.csv`.
+- `reranker-features` writes `data/processed/<dataset>/<scale>/reranker_features_{train,val}.parquet`
+  (gitignored, cached so later steps don't recompute them).
+- `train-reranker` evaluates B1 (BM25), B2 (embeddings), B3 (a learned-weight
+  BM25+embedding hybrid — `ire_a2/baselines.py`) and the GBDT re-ranker on the same
+  val-split sample `eval-harness` (A1's Q4) already reports on, trains the GBDT, then
+  reports Q3's paired-bootstrap-95%-CI ablation (GBDT vs. each baseline). Writes
+  `results/reranker_eval.csv` and `results/reranker_ablation.csv`.
+- `reranker-scale` times a single end-to-end request (candidate gen → feature build →
+  GBDT score) and measures index/feature-store memory. Writes
+  `results/reranker_scale_analysis.csv`.
+- `reranker-extended-eval` adds diversity/novelty/coverage and a head/tail slice
+  (by the clicked article's train-split popularity) alongside the existing
+  cold-start/warm slice, for all four methods. Writes `results/reranker_extended_eval.csv`.
+- `reranker-leakage-ablation` trains a second GBDT with one feature swapped for a
+  deliberately leaky (train+val hindsight) version and reports the paired delta.
+  Writes `results/reranker_leakage_ablation.csv`.
 
-**Q5 (Codabench submissions)** operate on the large, unlabeled test bundles directly
-(no `demo`/`small` equivalent — real submissions need real scale) and aren't wired
-into the `make`/`DATASET`/`SCALE` pattern above:
+`notebooks/02_a2_pipeline_gbdt.ipynb` runs all of the above end to end and is a
+presentation layer only — every cell imports and calls the same functions the scripts
+above call, so there is exactly one source of truth for the GBDT track. Re-execute
+with `jupyter nbconvert --to notebook --execute --inplace notebooks/02_a2_pipeline_gbdt.ipynb`.
+
+**Q6 (Codabench resubmission)** is deliberately not built yet — pending a decision
+between this track and the teammate's NRMS track once both are complete.
+
+**Q5's Codabench submissions from A1** (unrelated to A2's own Q5 above — A1's Q5 was
+the Codabench prediction-file step) operate on the large, unlabeled test bundles
+directly (no `demo`/`small` equivalent — real submissions need real scale) and aren't
+wired into the `make`/`DATASET`/`SCALE` pattern above:
 
 ```bash
 python scripts/generate_mind_submission.py     # -> mind_prediction.zip (2,370,727 rows)
@@ -113,23 +136,41 @@ src/ire_a2/
   features.py              A2 Q1: FeatureBuilder -- click-history/session/article
                             features, built on UserHistoryIndex.recent(); EB-NeRD-only
                             session/dwell signal via EbnerdSessionIndex + a raw-parquet
-                            dwell lookup (MIND has no session_id or per-click dwell time)
-  reranker.py               A2 Q2 Option A: LightGBM LambdaRank training/scoring
-scripts/build_reranker_features.py  A2 Q1: candidate-level feature table (train+val)
-scripts/train_reranker.py           A2 Q2: train GBDT, before/after metrics vs. Q4
-tests/test_a2_features.py   A2 Q1: FeatureBuilder correctness + UserHistoryIndex.recent()
+                            dwell lookup (MIND has no session_id or per-click dwell time);
+                            popularity_override hook used by Q9's leak ablation
+  baselines.py               A2 Q3 (baseline B3): learn_hybrid_weight()/hybrid_score()
+                             -- grid-searched BM25+embedding fusion weight
+  reranker.py                A2 Q2 Option A: LightGBM LambdaRank training/scoring
+scripts/build_reranker_features.py    A2 Q1: candidate-level feature table (train+val)
+scripts/train_reranker.py             A2 Q2/Q3: 3 baselines + GBDT + paired ablation
+scripts/reranker_scale_analysis.py    A2 Q4: index memory + p99 latency + cost/QPS
+scripts/run_reranker_extended_eval.py A2 Q5: full metrics, 2 slices, all 4 methods
+scripts/run_reranker_leakage_ablation.py  A2 Q9: with/without-leak paired ablation
+                             (popularity feature, via FeatureBuilder's popularity_override)
+tests/test_a2_features.py   A2 Q1/Q9: FeatureBuilder correctness + UserHistoryIndex.recent()
                              leakage boundary test
 tests/test_a2_reranker.py   A2 Q2: GBDT ranks the true click above distractors (synthetic)
-results/reranker_eval.csv   A2 Q2 output, same committed-CSV pattern as eval_results.csv
+tests/test_a2_baselines.py  A2 Q3: learn_hybrid_weight()/hybrid_score() correctness
+notebooks/02_a2_pipeline_gbdt.ipynb  A2 presentation layer -- runs the above end to end,
+                             real executed output, no logic of its own
+results/reranker_eval.csv              A2 Q2/Q3 per-method metrics (same pattern as eval_results.csv)
+results/reranker_ablation.csv          A2 Q3 paired-bootstrap deltas (GBDT vs. each baseline)
+results/reranker_scale_analysis.csv    A2 Q4 memory/latency/cost numbers
+results/reranker_extended_eval.csv     A2 Q5 full metrics x 4 methods x 5 slices
+results/reranker_leakage_ablation.csv  A2 Q9 with/without-leak paired deltas
 ```
 
 ## Status
 
 - [x] Q1 — click-history/session/article features (`src/ire_a2/features.py`)
-- [x] Q2 Option A — GBDT re-ranker, before/after metrics vs. Q4's BM25/embedding baselines
+- [x] Q2 Option A — GBDT re-ranker, before/after metrics vs. B1/B2/B3 baselines
 - [ ] Q2 Option B — NRMS (teammate's track, separate from this repo's history so far)
-- [ ] Q3 — baseline reproduced, then beaten + ablation with paired bootstrap CI
-- [ ] Q4 — serving & scale analysis
-- [ ] Q5 — extended evaluation (diversity/novelty/coverage, slices) + Codabench resubmission
+- [x] Q3 — 3 baselines (B1 BM25, B2 embeddings, B3 hybrid) reproduced, GBDT beats them
+      with a paired-bootstrap-95%-CI ablation (`scripts/train_reranker.py`)
+- [x] Q4 — serving & scale analysis (`scripts/reranker_scale_analysis.py`)
+- [x] Q5 — extended evaluation: diversity/novelty/coverage, cold-start/warm +
+      head/tail slices (`scripts/run_reranker_extended_eval.py`)
+- [ ] Q5's Codabench resubmission — deferred pending a decision between tracks
 - [ ] Q6 — design note
-- [ ] Q9 — with/without-leak ablation for the new re-ranker features
+- [x] Q9 — boundary test (live-checked in the notebook) + with/without-leak paired
+      ablation on `candidate_popularity` (`scripts/run_reranker_leakage_ablation.py`)

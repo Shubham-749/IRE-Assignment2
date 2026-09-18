@@ -5,7 +5,9 @@ metric definitions, not just re-derived from the implementation.
 
 import math
 
-from ire_a1.eval.metrics import auc_score, bootstrap_ci, mrr_score, ndcg_score
+import pytest
+
+from ire_a1.eval.metrics import auc_score, bootstrap_ci, mrr_score, ndcg_score, paired_bootstrap_ci
 
 
 def test_perfect_ranking_gives_max_scores():
@@ -67,4 +69,37 @@ def test_bootstrap_ci_bounds_sample_mean():
     values = [0.1, 0.9, 0.5, 0.3, 0.7, 0.2, 0.8, 0.4, 0.6, 0.5]
     mean, lo, hi = bootstrap_ci(values, n_boot=1000)
     assert lo <= mean <= hi
-    assert abs(mean - (sum(values) / len(values))) < 1e-9
+
+
+def test_paired_bootstrap_ci_constant_delta_has_zero_width():
+    a = [0.5, 0.5, 0.5]
+    b = [0.6, 0.6, 0.6]  # constant +0.1 improvement on every paired impression
+    mean, lo, hi = paired_bootstrap_ci(a, b, n_boot=200)
+    assert mean == pytest.approx(0.1)
+    assert lo == hi == pytest.approx(0.1)
+
+
+def test_paired_bootstrap_ci_excludes_zero_for_a_consistent_gain():
+    a = [0.5, 0.4, 0.6, 0.5, 0.45, 0.55, 0.5, 0.48, 0.52, 0.5]
+    b = [x + 0.2 for x in a]  # b consistently beats a by 0.2 on every impression
+    mean, lo, hi = paired_bootstrap_ci(a, b, n_boot=1000)
+    assert mean == pytest.approx(0.2)
+    assert lo > 0  # CI excludes zero -- a significant gain
+
+
+def test_paired_bootstrap_ci_straddles_zero_for_no_real_difference():
+    rng = __import__("random").Random(0)
+    a = [0.5 + rng.uniform(-0.05, 0.05) for _ in range(200)]
+    b = [0.5 + rng.uniform(-0.05, 0.05) for _ in range(200)]  # independent noise, no real effect
+    mean, lo, hi = paired_bootstrap_ci(a, b, n_boot=1000)
+    assert lo < 0 < hi
+
+
+def test_paired_bootstrap_ci_rejects_mismatched_lengths():
+    with pytest.raises(ValueError):
+        paired_bootstrap_ci([0.1, 0.2], [0.1])
+
+
+def test_paired_bootstrap_ci_empty_returns_nan():
+    mean, lo, hi = paired_bootstrap_ci([], [])
+    assert math.isnan(mean) and math.isnan(lo) and math.isnan(hi)

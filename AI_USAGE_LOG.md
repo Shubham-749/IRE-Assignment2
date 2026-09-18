@@ -235,6 +235,57 @@ reasoning about it in advance.
   hyperparameters. Feature importances are sane (`candidate_popularity`,
   `embedding_score`, `bm25_score`, `freshness_hours` dominate on both datasets).
 
+## A2 Q3–Q5/Q9 — Completing the GBDT Track, Comparison Notebook
+
+- Context: the teammate independently built almost the entire A2 assignment (Q1–Q9,
+  three baselines, NRMS, real executed results, real Codabench submission files) as
+  one self-contained notebook reimplementing A1 from scratch with different libraries.
+  Student's direction: **"lets complete the entire pipeline from my side using GBDT
+  and create a similar notebook, later we'd see what to do with the report and
+  codebench submissions based on the results"** — complete the GBDT track to the same
+  scope for a fair side-by-side comparison, explicitly deferring Q6/Codabench.
+- AI entered plan mode before writing code (multi-file, several genuine design
+  decisions) and proposed the one load-bearing architectural choice up front: new
+  logic goes into this repo's existing `src/ire_a1`/`src/ire_a2` package and
+  `scripts/`, extended rather than duplicated, with the new notebook as a thin
+  presentation layer that imports and runs those same functions — not a second
+  from-scratch implementation like the teammate's. Student approved the plan as
+  presented.
+- Built `src/ire_a2/baselines.py` (B3: a grid-searched BM25+embedding hybrid weight,
+  fit on train to avoid tuning on the same val split everything gets evaluated on),
+  added `paired_bootstrap_ci()` to `ire_a1/eval/metrics.py` (shared infra — Q3 and Q9
+  both need a paired significance test, not two separate CIs that can overlap even
+  when one method reliably beats the other), and a `popularity_override` hook on
+  `FeatureBuilder` for Q9's leak variant. Caught and fixed two own test-design bugs
+  before trusting the results: a synthetic hybrid-weight test whose assumption
+  ("uninformative signal ⇒ optimum near the far end") didn't hold once actually
+  computed (ties on a tiny 3-item grid resolve to the *first* alpha reaching the
+  plateau, not the extreme) — verified numerically before rewriting the test to check
+  the real invariant (achieved AUC), not a guessed alpha value.
+- Extended `scripts/train_reranker.py` (rather than writing a parallel Q3 script) to
+  add B3 and the paired-bootstrap ablation; wrote three new scripts for Q4
+  (`reranker_scale_analysis.py`), Q5 (`run_reranker_extended_eval.py`, reusing
+  `run_eval_harness.py`'s beyond-accuracy/aggregate code unmodified), and Q9
+  (`run_reranker_leakage_ablation.py`) — each following this repo's established
+  `--dataset/--scale` CLI + `results/*.csv` pattern.
+- Real, not cherry-picked results: Q3's ablation shows GBDT beats BM25 significantly
+  on both datasets, but *loses* to embeddings/hybrid on MRR on both datasets (and on
+  AUC on MIND) — reported as-is, both directions. Q9's leak ablation (hindsight
+  train+val popularity) produces a large, clearly significant inflation on every
+  metric on both datasets (e.g. EB-NeRD AUC +0.149), a clean demonstration of what a
+  real leak looks like. Q4's scale analysis: single-core p99 latency ~4-8ms at
+  demo/small scale, comfortably under a 100ms SLA; the written scaling argument (in
+  the notebook) identifies brute-force embedding search as the first thing to break
+  at 10x, not feature building or GBDT scoring.
+- Built `notebooks/02_a2_pipeline_gbdt.ipynb` by generating it programmatically (a
+  throwaway generator script, deleted after use, matching this repo's PDF-generation
+  script precedent), then **actually executed it end to end**
+  (`jupyter nbconvert --execute`) rather than leaving cells unrun — every printed
+  number in it is real, and cross-checked to match the standalone script runs exactly
+  (same seed=42 throughout), not just assumed to.
+- Full test suite (65/65, including new `test_a2_baselines.py` and extended
+  `test_metrics.py`) passing throughout; re-ran after every package change.
+
 ## Code Provenance Summary
 
 Every `.py` file under `src/ire_a1/`, `src/ire_a2/`, `scripts/`, and `tests/`, the

@@ -150,6 +150,7 @@ class FeatureBuilder:
         behaviors_train: pl.DataFrame,
         raw_dir: Path | None = None,
         scale: str | None = None,
+        popularity_override: dict | None = None,
     ):
         self.dataset = dataset
         self.bm25 = bm25
@@ -160,7 +161,13 @@ class FeatureBuilder:
             if dataset == "ebnerd"
             else {}
         )
-        self._popularity = _train_popularity(behaviors_train)
+        # popularity_override lets a caller substitute a deliberately leaky popularity
+        # dict (e.g. computed with val-split hindsight) for Q9's with/without-leak
+        # ablation, without touching the safe train-only default every other caller
+        # gets.
+        self._popularity = popularity_override if popularity_override is not None else _train_popularity(
+            behaviors_train
+        )
 
         # Session/dwell signal is a real EB-NeRD-only data limitation, not a modelling
         # choice -- MIND provides no session_id or per-click dwell time at all (same

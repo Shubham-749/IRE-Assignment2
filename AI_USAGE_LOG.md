@@ -286,6 +286,78 @@ reasoning about it in advance.
 - Full test suite (65/65, including new `test_a2_baselines.py` and extended
   `test_metrics.py`) passing throughout; re-ran after every package change.
 
+## A2 Q6 — Large-Scale GBDT Codabench Submissions
+
+- Context: teammate sent an updated design note + notebook claiming NRMS results and
+  a "Comparative Study vs. GBDT" section; student asked what to make of it and where
+  the project stood. AI read the underlying notebook cells (not just the design note
+  text) and found two real issues — Q3's "NRMS_NoPos vs. baselines" table wasn't
+  backed by an actual paired bootstrap for the model actually being submitted (only
+  the rejected Pos variant got a real one; the note's own footnote admitted the
+  NoPos row was back-derived by simple subtraction), and Q9's serving-time ablation
+  produced a suspiciously exact zero effect that traced to an overly-broad filter set
+  that barely filtered anything — reported both clearly rather than taking the design
+  note's numbers at face value. Concluded Q5's Codabench submission was the one
+  actually-incomplete requirement for either track. Student then asked to build the
+  GBDT track's own submission: **"yes, start on it"**, later clarifying after a
+  hedging remark from the AI that this meant the *complete* real pipeline (real
+  large-scale downloads, real retraining, full unlabeled test sets, no shortcuts) —
+  not a partial/token version.
+- Real, hard-won engineering, not a clean first pass:
+  - **Disk**: EB-NeRD's large bundle is ~4.8GB compressed; this machine started with
+    23GB free and hit 100% full mid-run at one point (zips re-downloaded twice after
+    being deleted for space, since the download step doesn't know local deletion
+    happened). Recovered by deleting extracted-but-no-longer-needed raw data once each
+    dataset's processing was done.
+  - **Memory**: this 16GB-RAM machine's *other* running applications (browser,
+    desktop apps) were consuming ~11GB, leaving the actual python process (a
+    reasonable ~4GB) almost no room — student closed Chrome once this was
+    diagnosed, which measurably fixed it. Separately, a real SIGSEGV in LightGBM was
+    traced to an unconditional `torch.mps.empty_cache()` call left over from an
+    earlier memory-mitigation attempt, firing even on runs that never touched
+    MPS — scoping it to only the branch that actually used MPS fixed it outright
+    (verified: identical run, only that scoping changed, succeeded).
+  - **A genuine bug in shared A1 code**: `clean_user_history()`'s global
+    explode+unique OOM'd at EB-NeRD-large scale (a fix generate_ebnerd_submission.py
+    had already found and applied locally for its own narrow use, but never carried
+    back into the shared function itself). Fixed at the source, verified numerically
+    identical to the old implementation on real demo-scale data before trusting it at
+    scale — then found that fix *still* wasn't enough at full scale (building history
+    for every user in train+validation, not just the ones needed), so redesigned to a
+    targeted, needed-users-only lookup instead.
+  - **A genuine bug newly discovered, not inherited**: while investigating why
+    `written` counts were barely moving during a real EB-NeRD run, found 200,000 real
+    test rows (a deliberate-looking round number) all sharing `raw_impression_id ==
+    "0"` — verified directly that `rank_and_group()` silently collapses same-ID rows
+    into one output line (`['0','0','0']` → one 3-element group, not three lines).
+    Checked whether this affected the *already-submitted* A1 EB-NeRD prediction file
+    too: it didn't, but only by accident — that run had OOM'd and been resumed via
+    `--skip`, which switches to a different, non-grouping fallback function for
+    exactly the chunk that happened to contain these rows. Fixed properly (a
+    synthetic per-row `row_uid` for grouping, with the original, possibly-duplicate
+    ID reattached only for the line actually written), verified on the exact
+    problematic 10,000-row slice before re-running the full 13.5M-row job.
+- Hyperparameter tuning: after generating MIND's submission with fixed defaults,
+  student asked why they weren't tuned; AI explained plainly (time/infra tradeoff, not
+  a limitation) and offered to add a search. Student's direction: **"lets try to find
+  the best one atleast for mind and based on the time it takes and performance we'll
+  see for ebnerd else use the default one for that"** — a real, cheap random search
+  (12 trials, ~2-3.5 min each dataset, scored against each dataset's actual validation
+  split) found a meaningfully better config for both (MIND AUC 0.624→0.640; EB-NeRD
+  AUC up to 0.699), cheap enough that both datasets got tuned, not just MIND. Student
+  separately confirmed the reasoning for trusting a dev-set-validated config directly
+  (without spending real Codabench submissions on experimentation) was sound before
+  proceeding.
+- Final verified deliverables: `mind_a2_gbdt_predictions.zip` (2,370,727 rows, exact
+  match to A2.pdf's stated count, zero duplicate IDs, `prediction.txt` inside) and
+  `ebnerd_a2_gbdt_predictions.zip` (13,536,710 rows, exact match, the 200,000
+  degenerate rows correctly present as separate lines, `predictions.txt` inside) —
+  both trained on a real large-scale sample with tuned hyperparameters, not the
+  demo/small model. Student explicitly wanted exactly one, final, optimized upload per
+  competition (**"no i'll upload once only, the final optimised one"**), which is why
+  MIND was regenerated a second time after tuning rather than treating the
+  first (untuned) run as done.
+
 ## Code Provenance Summary
 
 Every `.py` file under `src/ire_a1/`, `src/ire_a2/`, `scripts/`, and `tests/`, the

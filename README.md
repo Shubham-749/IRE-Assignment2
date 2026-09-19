@@ -158,6 +158,21 @@ results/reranker_ablation.csv          A2 Q3 paired-bootstrap deltas (GBDT vs. e
 results/reranker_scale_analysis.csv    A2 Q4 memory/latency/cost numbers
 results/reranker_extended_eval.csv     A2 Q5 full metrics x 4 methods x 5 slices
 results/reranker_leakage_ablation.csv  A2 Q9 with/without-leak paired deltas
+
+scripts/tune_mind_gbdt.py/tune_ebnerd_gbdt.py   A2 Q6: random hyperparameter search
+                             against each dataset's real validation split
+results/mind_gbdt_hyperparam_search.csv, ebnerd_gbdt_hyperparam_search.csv  search results
+scripts/generate_mind_gbdt_submission.py    A2 Q6: MIND large-test predictions, GBDT
+                             retrained + tuned at large scale (not demo/small) ->
+                             Codabench zip
+scripts/generate_ebnerd_gbdt_submission.py  A2 Q6: EB-NeRD large-test predictions, same
+                             shape -- includes a targeted (not full-population)
+                             history-lookup fix for this dataset's documented OOM
+                             history, and a row_uid fix for 200,000 real test rows
+                             that all share raw_impression_id == "0" (verified: naive
+                             grouping collapses them into one output line)
+mind_a2_gbdt_predictions*.txt/.zip, ebnerd_a2_gbdt_predictions*.txt/.zip  Q6 submission
+                             files (gitignored, regenerable via the two scripts above)
 ```
 
 ## Status
@@ -170,7 +185,12 @@ results/reranker_leakage_ablation.csv  A2 Q9 with/without-leak paired deltas
 - [x] Q4 — serving & scale analysis (`scripts/reranker_scale_analysis.py`)
 - [x] Q5 — extended evaluation: diversity/novelty/coverage, cold-start/warm +
       head/tail slices (`scripts/run_reranker_extended_eval.py`)
-- [ ] Q5's Codabench resubmission — deferred pending a decision between tracks
+- [x] Q5's Codabench resubmission — real large-scale predictions generated and
+      verified for both datasets (GBDT retrained + tuned at large scale, not the
+      demo/small model): `scripts/generate_mind_gbdt_submission.py`,
+      `scripts/generate_ebnerd_gbdt_submission.py`. Hyperparameters tuned via
+      `scripts/tune_mind_gbdt.py`/`tune_ebnerd_gbdt.py` (random search against each
+      dataset's real validation split — see `results/*_gbdt_hyperparam_search.csv`)
 - [ ] Q6 — design note
 - [x] Q9 — boundary test (live-checked in the notebook) + with/without-leak paired
       ablation on `candidate_popularity` (`scripts/run_reranker_leakage_ablation.py`)

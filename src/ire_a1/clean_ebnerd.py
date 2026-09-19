@@ -53,6 +53,40 @@ def clean_behaviors(split_dir: Path, split: str) -> pl.DataFrame:
     )
 
 
+def _dedup_history_locally(history_path: Path) -> pl.DataFrame:
+    """Per-user local (article_id, click_timestamp) dedup, without a global
+    explode+unique over the whole file first -- that combination OOM'd a real
+    13.5M-impression EB-NeRD large run on a 17GB-RAM machine (discovered and fixed
+    for one narrow caller in generate_ebnerd_submission.py's build_user_vectors();
+    applied here, inside clean_user_history() itself, so every caller gets the fix,
+    not just that one script). A user's raw history row already holds their full
+    (article_id, timestamp) lists -- exploding+deduping *all* users at once forces
+    polars to hold every user's history simultaneously during the explode, then
+    again during unique()'s internal hashing; deduping one user's own list at a time
+    needs only that user's data in memory at once. Duplicates are (user, article,
+    timestamp) triples, i.e. inherently per-user, so this produces an identical
+    result to the old global explode+unique -- verified against it on real data
+    before being trusted for the fix.
+    """
+    raw = pl.read_parquet(history_path).select(
+        pl.col("user_id").cast(pl.Utf8), "article_id_fixed", "impression_time_fixed"
+    )
+    user_ids, article_ids, timestamps = [], [], []
+    for user_id, aids, tss in raw.iter_rows():
+        for aid, ts in dict.fromkeys(zip(aids, tss)):
+            user_ids.append(user_id)
+            article_ids.append(str(aid))
+            timestamps.append(ts)
+    return pl.DataFrame(
+        {
+            "user_id": user_ids,
+            "dataset": pl.Series(["ebnerd"] * len(user_ids), dtype=pl.Utf8),
+            "article_id": article_ids,
+            "click_timestamp": pl.Series(timestamps, dtype=pl.Datetime),
+        }
+    )
+
+
 def clean_user_history(raw_scale_dir: Path) -> pl.DataFrame:
     """Combine train+validation(+test, if present) history.parquet into one
     long-format, deduplicated click log -- the single source of truth used for
@@ -63,21 +97,12 @@ def clean_user_history(raw_scale_dir: Path) -> pl.DataFrame:
         history_path = raw_scale_dir / split_dirname / "history.parquet"
         if not history_path.exists():
             continue
-        raw = pl.read_parquet(history_path)
-        exploded = raw.select(
-            pl.col("user_id").cast(pl.Utf8),
-            pl.col("article_id_fixed"),
-            pl.col("impression_time_fixed"),
-        ).explode(["article_id_fixed", "impression_time_fixed"])
-        frames.append(
-            exploded.select(
-                pl.col("user_id"),
-                pl.lit("ebnerd").alias("dataset"),
-                pl.col("article_id_fixed").cast(pl.Utf8).alias("article_id"),
-                pl.col("impression_time_fixed").alias("click_timestamp"),
-            )
-        )
+        frames.append(_dedup_history_locally(history_path))
     combined = pl.concat(frames)
+    # A user's history can still appear (with different anchors) in more than one
+    # split file, so a final cross-split dedup is still needed -- but this is a
+    # dedup over the already-deduped, per-split-deduped combined frame, not a raw
+    # explode, so it doesn't reintroduce the original memory spike.
     return combined.unique(subset=["user_id", "article_id", "click_timestamp"])
 
 

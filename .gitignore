@@ -8,6 +8,8 @@ data/
 # generated Codabench submission files (large, regenerable from scripts/generate_*.py)
 mind_prediction*.txt
 predictions*.txt
+mind_a2_gbdt_predictions*.txt
+ebnerd_a2_gbdt_predictions*.txt
 
 # python
 __pycache__/

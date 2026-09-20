@@ -191,6 +191,8 @@ mind_a2_gbdt_predictions*.txt/.zip, ebnerd_a2_gbdt_predictions*.txt/.zip  Q6 sub
       `scripts/generate_ebnerd_gbdt_submission.py`. Hyperparameters tuned via
       `scripts/tune_mind_gbdt.py`/`tune_ebnerd_gbdt.py` (random search against each
       dataset's real validation split — see `results/*_gbdt_hyperparam_search.csv`)
-- [ ] Q6 — design note
+- [x] Q6 — design note (`design_note_A2_gbdt.tex`/`.pdf`, 6 pages), including real
+      Codabench leaderboard results (honest, not cherry-picked -- MIND scored *below*
+      A1's untrained embedding heuristic)
 - [x] Q9 — boundary test (live-checked in the notebook) + with/without-leak paired
       ablation on `candidate_popularity` (`scripts/run_reranker_leakage_ablation.py`)

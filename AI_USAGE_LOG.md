@@ -358,6 +358,42 @@ reasoning about it in advance.
   MIND was regenerated a second time after tuning rather than treating the
   first (untuned) run as done.
 
+## A2 Q6 — Design Note, Real Codabench Results, Notebook Update
+
+- After the real Codabench scores came back (MIND 0.5863 vs. A1's 0.6544; EB-NeRD
+  submission accepted but leaderboard status still unresolved as of writing), student
+  asked for the same kind of deliverables the teammate had sent: a LaTeX design note +
+  PDF, and an updated, re-executed notebook -- **"give updated files like before...
+  i guess we need a report latex, report pdf and updated ipynb notebook."**
+- AI entered plan mode given the scope (a real, potentially-graded document); one
+  explicit design decision: since EB-NeRD's exact leaderboard failure mode wasn't yet
+  known, the design note states plainly what's verified (submission file correct: row
+  count, format, filename) and marks the leaderboard outcome "pending" rather than
+  fabricate a number -- flagged directly, not glossed over.
+- Wrote `design_note_A2_gbdt.tex` populated entirely from numbers already sitting in
+  `results/*.csv` and `A2_TRACK_COMPARISON.md` -- no new experiments run for the note
+  itself. Reported MIND's real, disappointing Codabench result in the same document as
+  the Q3 ablation that already predicted it (GBDT loses to embeddings on MIND's AUC,
+  locally too) -- consistent, not contradictory, framing kept front and center rather
+  than softened.
+- Compiling hit a real environment gap: this machine's TinyTeX installation was
+  missing `enumitem`/`caption`/`multirow`/`graphicx`'s dependency chain, and `tlmgr`
+  refused a same-release install because its local TeX Live (2025) was older than the
+  live repository (2026, already rolled over). Resolved by pointing `tlmgr` at a
+  version-matched historic CTAN mirror (`.../historic/systems/texlive/2025/tlnet-final`)
+  rather than touching the user's TeX Live version — installs the missing packages
+  without an OS-level upgrade. Verified by actually rendering the compiled PDF to PNG
+  (`pdftoppm`, also installed via Homebrew after discovering the Read tool's built-in
+  PDF renderer didn't share the shell's `PATH`) and reading each page, not just
+  trusting a clean `pdflatex` exit code -- caught and fixed several overfull-hbox
+  warnings (long unbroken identifiers in narrow table columns) this way before calling
+  it done.
+- Updated `notebooks/02_a2_pipeline_gbdt.ipynb` with two new, actually-executed
+  sections (hyperparameter search results, Q6 Codabench verification) and re-ran the
+  *entire* notebook end to end afterward -- not just the new cells -- matching this
+  project's standing rule that every number in a notebook has to be real, checked
+  again after this specific update (0 error-type outputs post re-execution).
+
 ## Code Provenance Summary
 
 Every `.py` file under `src/ire_a1/`, `src/ire_a2/`, `scripts/`, and `tests/`, the

@@ -22,6 +22,12 @@ venv/
 # notebooks
 .ipynb_checkpoints/
 
+# LaTeX build artifacts (design_note*.tex/.pdf are the real deliverables, kept)
+*.aux
+*.log
+*.out
+*.toc
+
 # os
 .DS_Store
 
